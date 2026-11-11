@@ -22,8 +22,12 @@ your numbers with the **[reference results](#6-reference-results-what-you-should
                             ├─ ug:inference_table  + request/response logging to Unity Catalog
                             ├─ ug:rate_limits      + rate limits (set very high: evaluated, never triggered)
                             ├─ ug:all_features     + both
-                            └─ ug_provider:direct  provider service only (no model service)
+                            ├─ ug_provider:direct  provider service only (no model service)
+                            └─ dbx_hosted:ug       model service ──► the same model hosted by Databricks
+                                                   (Foundation Model API, pay-per-token), not your Bedrock
 ```
+`dbx_hosted:ug` answers a different question from the others: with the gateway held constant, how does the
+**Databricks-hosted** copy of the model compare with the model in **your own** Bedrock account?
 
 ---
 
@@ -137,6 +141,10 @@ profile (for example `us.anthropic.claude-haiku-4-5-20251001-v1:0`, `us.anthropi
 `us.anthropic.claude-opus-5-5`, or a `global.` profile). List what your account offers with
 `aws bedrock list-inference-profiles --region <region>`. Everything else is derived from that ID:
 
+* **Databricks-hosted copy.** The same model hosted by Databricks is derived too:
+  `us.anthropic.claude-sonnet-5-5` -> `databricks-claude-sonnet-5-5` (UC model `system.ai.databricks-claude-sonnet-5-5`),
+  reached through the model service `ugbench_<slug>_dbx_hosted`. Set `unity_gateway.databricks_hosted.enabled:
+  false` to skip it, or `.model` to name a different endpoint. In the bundle, set `databricks_hosted_model`.
 * **Service names.** A short *model slug* (`us.anthropic.claude-sonnet-5-5` -> `sonnet_5_5`) names the services:
   model services `ugbench_<slug>_{baseline,inference_table,rate_limits,all_features}`, provider
   `ugbench_<slug>_bedrock`, inference tables `ugbench_<slug>_<variant>_payload`. **Each model gets its own set of
@@ -179,6 +187,7 @@ targets:
       schema: ug_benchmark
       bedrock_model_id: us.anthropic.claude-sonnet-5-5
       model_slug: sonnet_5_5                    # the slug `ugbench --model <id> targets` prints
+      databricks_hosted_model: databricks-claude-sonnet-5-5
 
   sonnet_5_5_sc:                                # Option A (service credential): the bundle also creates the provider
     variables:
@@ -197,6 +206,7 @@ The included `dev` target (Option A, Haiku 4.5) works the same way. All variable
 | `catalog`, `schema` | *(set per target)* | Where the services and inference tables are created |
 | `bedrock_model_id` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | **The model**, on every path |
 | `model_slug` | `haiku_4_5` | Short model name used in the service names |
+| `databricks_hosted_model` | `databricks-claude-haiku-4-5` | Databricks-hosted copy of the model, for `dbx_hosted:ug` |
 | `service_prefix` | `ugbench_${var.model_slug}` | Model services `<prefix>_{baseline,inference_table,rate_limits,all_features}` |
 | `provider_service` | `ugbench_${var.model_slug}_bedrock` | Model provider service |
 | `inference_table_prefix` | `ugbench_${var.model_slug}` | Tables `<prefix>_<variant>_payload` |
@@ -240,7 +250,7 @@ databricks bundle deploy -p <profile> -t $T
 .venv/bin/ugbench --model $M setup --provider-only
 databricks bundle deploy -p <profile> -t $T
 
-.venv/bin/ugbench --model $M targets        # the 6 paths and the request fields
+.venv/bin/ugbench --model $M targets        # the 7 paths and the request fields
 .venv/bin/ugbench --model $M health         # 30 requests per path; must print HEALTHY before you benchmark
 ```
 After the first deploy, configuration can take **5–30 minutes** to reach every gateway instance. Re-run `health`
@@ -277,14 +287,14 @@ parameter. The defaults match our headline run: 150 QPS for 20 minutes, tiny pro
    # headline run (defaults: 150 QPS, 20 min, tiny prompt)
    databricks bundle run ugbench_benchmark -p <profile> -t $T --params run_id=acme-$T-qps150-20min
 
-   # any other variant, for example 30 minutes at 100 QPS
+   # any other variant, for example 30 minutes at 117 QPS (~17 QPS on each of the 7 paths)
    databricks bundle run ugbench_benchmark -p <profile> -t $T --no-wait \
-     --params qps=100,duration_s=1800,run_id=acme-$T-qps100-30min
+     --params qps=117,duration_s=1800,run_id=acme-$T-qps117-30min
    ```
    | Parameter | Default | Meaning |
    |---|---|---|
    | `qps`, `duration_s`, `arrival` | `150`, `1200`, `poisson` | Open-loop request rate and length |
-   | `workload` | `tiny` | `tiny`, `large_prompt` or `realistic` |
+   | `workload` | `tiny` | `tiny`, `large_prompt`, `realistic`, or `throughput` (500 streamed tokens, 3.7b) |
    | `run_id` | auto | Name of the results folder |
    | `health_n` | `10` | Health-gate requests per path before the run (the job fails if a path is unhealthy) |
    | `aws_creds` | `uc_secrets` | `service_credential` for Option A (set `bedrock_service_credential` too) |
@@ -302,6 +312,24 @@ parameter. The defaults match our headline run: 150 QPS for 20 minutes, tiny pro
 *Without bundles:* upload the folder with `databricks workspace import-dir` and start the notebook with
 `databricks jobs submit`, using the same parameters as `base_parameters` and an `environments` block with
 `environment_version: "4"`.
+
+### 3.7b Streaming output speed (throughput mode)
+The default workload measures latency with a 4-token reply. To measure **how fast tokens arrive**, use the
+`throughput` workload: a streamed reply of exactly 500 tokens on every path. The report then adds, per path,
+**time to first token** (TTFT) and **output speed** (tokens after the first ÷ time after the first token, the
+Artificial Analysis definition), with paired differences vs. Bedrock direct and, for `dbx_hosted:ug`, vs. your
+Bedrock through the same gateway.
+```bash
+# Databricks (recommended): ~2 QPS per path, 10 minutes
+databricks bundle run ugbench_benchmark -p <profile> -t $T \
+  --params workload=throughput,qps=14,duration_s=600,run_id=acme-$T-throughput-10min
+
+# laptop
+.venv/bin/ugbench --model $M run --workload throughput --qps 14 --duration 600
+```
+**Cost.** Long replies are billed on every path: 10 minutes at 14 QPS is ~8,400 requests x 500 output tokens
+≈ 4M output tokens, i.e. roughly $5 (Haiku 4.5) to $80 (Opus 5.5) at list price, plus input tokens. Keep the rate
+low: output speed doesn't need high QPS, and each streamed reply holds a connection open for several seconds.
 
 ### 3.8 Server-side breakdown (30–60 min after a run)
 ```bash
@@ -362,54 +390,101 @@ Interpretation rules:
 
 We ran the steps in §3 in our own environment. Use these numbers as a reference to check yours: the gateway
 overhead should land in the same range, and the features should be indistinguishable from zero. Absolute
-latencies depend on the model, Bedrock load, and how your client reaches the workspace (§6.4).
+latencies depend on the model, Bedrock load, and how your client reaches the workspace (§6.6).
 
 **Environment:** Databricks workspace and Bedrock both in **us-east-1**; client = the bundle job on Databricks
-serverless (§3.7); Anthropic Messages API; US cross-region inference profiles; tiny prompt (4-token reply);
-Nov 2026.
+serverless (§3.7); Anthropic Messages API; US cross-region inference profiles; Nov 2026. Each model's runs used
+the same 7 paths, interleaved in the same rounds. The three models ran at the same time, as separate jobs.
 
-### 6.1 Model comparison: 100 QPS for 30 minutes, from Databricks
-180,000 requests per model (30,000 per path), interleaved; the client held the rate in every run.
+### 6.1 Gateway overhead per call: tiny reply, 117 QPS for 30 minutes
+4-token reply, ~17 QPS per path, 210,600 requests per model. The client held the rate in every run.
 
 | Model | Bedrock direct P50 / P90 / P99 | Through Unity Gateway P50 / P90 / P99 | **Added (paired median, 95% CI)** | Share of direct P50 | Errors |
 |---|---|---|---|---|---|
-| Claude Haiku 4.5 | 310 / 363 / 665 ms | 339 / 397 / 747 ms | **+29.2 ms** [28.6, 29.8] | 9.4% | 2 |
-| Claude Sonnet 5.5 | 803 / 1047 / 1757 ms | 834 / 1075 / 1768 ms | **+28.9 ms** [27.0, 30.8] | 3.6% | 0 |
-| Claude Opus 5.5 | 890 / 1088 / 1921 ms | 919 / 1126 / 1947 ms | **+28.8 ms** [27.7, 29.9] | 3.2% | 0 |
+| Claude Haiku 4.5 | 323 / 388 / 1076 ms | 350 / 418 / 1243 ms | **+27.2 ms** [26.7, 27.8] | 8.4% | 6 |
+| Claude Sonnet 5.5 | 565 / 1376 / 3555 ms | 591 / 1401 / 3540 ms | **+26.4 ms** [24.3, 28.8] | 4.7% | 6 |
+| Claude Opus 5.5 | 1020 / 1337 / 2242 ms | 1051 / 1379 / 2240 ms | **+28.8 ms** [26.9, 30.6] | 2.8% | 4 |
 
 "Through Unity Gateway" is the model service with no optional features. The provider service alone
-(`ug_provider:direct`) adds the same: +29.5 / +29.1 / +29.0 ms.
+(`ug_provider:direct`) adds the same: +27.1 / +25.4 / +27.7 ms. Errors are per run, out of ~210,600; all were
+502s relaying an upstream 5xx, plus one read timeout.
 
-**The overhead is a fixed ~29 ms per call, independent of the model.** Bedrock's own latency varies 3x across
-these models; the gateway adds the same amount to each, so its share falls as the model gets slower. P99 deltas
-(not shown) swing by ±100 ms between runs: that is Bedrock's tail, not the gateway (use 6.3 for tail behavior).
+**The overhead is a fixed ~27–29 ms per call, independent of the model.** Bedrock's own latency varies 3x
+across these models; the gateway adds the same amount to each, so its share falls as the model gets slower.
+An earlier set of runs (100 QPS for 30 minutes, 6 paths) gave +29.2 / +28.9 / +28.8 ms. P99 deltas (not shown)
+swing by ±100 ms between runs: that is Bedrock's tail, not the gateway (see 6.5 for the gateway's own tail).
 
 **Gateway features, vs. the same model service without them** (paired median, ms, 95% CI):
 
 | Model | + inference table | + rate limits | + both |
 |---|---|---|---|
-| Claude Haiku 4.5 | +0.4 [−0.1, +1.0] | +0.1 [−0.5, +0.7] | +0.2 [−0.4, +0.7] |
-| Claude Sonnet 5.5 | −3.4 [−4.7, −1.6] | −1.5 [−3.3, +0.2] | −1.9 [−3.5, −0.2] |
-| Claude Opus 5.5 | +0.4 [−0.9, +1.5] | +0.6 [−0.5, +2.0] | +0.3 [−0.8, +1.5] |
+| Claude Haiku 4.5 | −0.1 [−0.6, +0.5] | −0.2 [−0.8, +0.4] | +0.1 [−0.5, +0.7] |
+| Claude Sonnet 5.5 | +1.4 [−0.7, +4.0] | +0.2 [−1.9, +2.7] | +0.5 [−1.9, +2.6] |
+| Claude Opus 5.5 | −0.6 [−2.6, +2.0] | +0.2 [−2.1, +2.0] | −1.7 [−3.8, +0.0] |
 
-No feature adds measurable latency on any model. The small negative values for Sonnet 5.5 don't mean the feature
-makes requests faster: they are the size of service-to-service variation when the model itself takes ~800 ms.
+No feature adds measurable latency on any model: every interval includes zero.
 
-Reproduce a row (per model target, §3.4–3.5):
-```bash
-databricks bundle run ugbench_benchmark -p <profile> -t <target> --params qps=100,duration_s=1800,run_id=<name>
-```
+### 6.2 Databricks-hosted model vs. your own Bedrock (same gateway)
+`dbx_hosted:ug` sends the same request through the same gateway to the **Databricks-hosted** copy of the model
+(Foundation Model API, pay-per-token), instead of to the model in your Bedrock account. Same runs as 6.1.
 
-### 6.2 Request rate and run length (Claude Haiku 4.5, from Databricks)
+| Model | Databricks-hosted P50 / P90 / P99 | vs. your Bedrock through the gateway | vs. Bedrock direct |
+|---|---|---|---|
+| Claude Haiku 4.5 | 411 / 494 / 1054 ms | **+63.1 ms** [62.3, 63.7] | +90.3 ms |
+| Claude Sonnet 5.5 | 704 / 1514 / 3609 ms | **+107.7 ms** [105.4, 110.1] | +134.7 ms |
+| Claude Opus 5.5 | 1198 / 1541 / 2421 ms | **+145.3 ms** [142.8, 147.5] | +173.9 ms |
+
+With the gateway held constant, the difference is the serving path behind it. In our environment the
+Databricks-hosted copy was slower than our own Bedrock account, by an amount that grows with model size.
+6.3 shows that the difference is a delay before the first token, not slower generation.
+
+### 6.3 Streaming: total time for a 500-token reply, time to first token, output speed
+`throughput` workload (§3.7b): a streamed reply of exactly 500 tokens on every path, 14 QPS (2 per path) for
+10 minutes, 8,400 requests per model, no errors.
+
+| Model | Path | Total time P50 | Time to first token P50 | Output speed P50 |
+|---|---|---|---|---|
+| Claude Haiku 4.5 | Bedrock direct | 3890 ms | 365 ms | 141.9 tok/s |
+| | Through Unity Gateway | 3928 ms | 403 ms | 142.0 tok/s |
+| | Databricks-hosted | 3925 ms | 445 ms | 144.0 tok/s |
+| Claude Sonnet 5.5 | Bedrock direct | 5170 ms | 610 ms | 111.5 tok/s |
+| | Through Unity Gateway | 5225 ms | 636 ms | 111.1 tok/s |
+| | Databricks-hosted | 5305 ms | 726 ms | 111.0 tok/s |
+| Claude Opus 5.5 | Bedrock direct | 6597 ms | 1517 ms | 99.3 tok/s |
+| | Through Unity Gateway | 6627 ms | 1549 ms | 99.5 tok/s |
+| | Databricks-hosted | 6756 ms | 1664 ms | 99.5 tok/s |
+
+Paired differences (median, 95% CI):
+
+| Model | Comparison | Total time | Time to first token | Output speed |
+|---|---|---|---|---|
+| Claude Haiku 4.5 | Gateway vs. direct | +37 ms [29, 47] | +37 ms [33, 42] | +0.1 tok/s [−0.3, +0.4] |
+| Claude Sonnet 5.5 | Gateway vs. direct | +27 ms [−21, 75] | +21 ms [5, 33] | −0.9 tok/s [−1.4, −0.4] |
+| Claude Opus 5.5 | Gateway vs. direct | +14 ms [−17, 46] | +25 ms [7, 38] | 0.0 tok/s [−0.7, +0.5] |
+| Claude Haiku 4.5 | Hosted vs. your Bedrock (same gateway) | −2 ms [−8, 7] | +44 ms [39, 48] | +2.0 tok/s [+1.6, +2.2] |
+| Claude Sonnet 5.5 | Hosted vs. your Bedrock | +89 ms [45, 120] | +75 ms [59, 86] | 0.0 tok/s [−0.6, +0.7] |
+| Claude Opus 5.5 | Hosted vs. your Bedrock | +125 ms [98, 153] | +117 ms [103, 131] | −0.1 tok/s [−0.7, +0.4] |
+
+* **The gateway adds a small, fixed delay before the first token and doesn't change how fast tokens arrive**
+  (output speed within ±1% on every model). On a full 500-token reply, that is under 1% of the total time.
+* **Total-time differences have wide intervals on the larger models**: a 5–7 s generation varies by hundreds of
+  milliseconds, so a ~30 ms overhead is hard to resolve with ~600 requests per path. The tiny-reply runs in 6.1
+  are the precise measure of the overhead; this run is the realistic end-to-end view.
+* **Databricks-hosted vs. your Bedrock:** a later first token (+44 / +75 / +117 ms), then the same output
+  speed. On Haiku 4.5, slightly faster streaming offset the later start, so total time was equal.
+* Opus 5.5's first token takes ~1.5 s on every path, even at `effort: low`: that is the model, not the gateway.
+
+### 6.4 Request rate and run length (Claude Haiku 4.5, tiny reply, from Databricks)
 
 | Run | Direct P50 | Added (paired median) | Features | Errors |
 |---|---|---|---|---|
 | 150 QPS, 20 min | 295 ms | +27.8 ms [27.3, 28.2] | < 1 ms | 1 (upstream 503) |
 | 150 QPS, 20 min (second run) | 328 ms | +28.8 ms [28.2, 29.3] | < 1 ms | 31 (30 read timeouts in one 13-min window) |
 | 100 QPS, 30 min | 310 ms | +29.2 ms [28.6, 29.8] | < 0.5 ms | 2 |
+| 117 QPS, 30 min (6.1) | 323 ms | +27.2 ms [26.7, 27.8] | < 0.5 ms | 6 |
 | 100 QPS, 10 min, large prompt (566 input tokens) | 319 ms | +26.8 ms [26.0, 27.5] | < 0.5 ms | 0 |
 
-### 6.3 Where the ~29 ms goes (server side)
+### 6.5 Where the overhead goes (server side)
 From `system.ai_gateway.usage` (§3.8), Claude Haiku 4.5, 150 QPS for 20 min, all 150,000 gateway requests:
 
 | Part | Median |
@@ -418,7 +493,7 @@ From `system.ai_gateway.usage` (§3.8), Claude Haiku 4.5, 150 QPS for 20 min, al
 | Gateway → Bedrock network leg | 11.0 ms |
 | Client → Databricks network leg | 14.4 ms |
 
-### 6.4 Runs from a laptop
+### 6.6 Runs from a laptop
 A laptop measures over the internet, so the client → Databricks leg differs from a client inside AWS.
 
 | Run | Added (median) | Features |
@@ -427,14 +502,22 @@ A laptop measures over the internet, so the client → Databricks leg differs fr
 | Haiku 4.5, 100 QPS, 5 min, large prompt (566 tokens) | +22 ms | < 0.5 ms |
 | Haiku 4.5, Strands + Anthropic SDK, 30 QPS, 300-token replies (experimental layer) | +26 ms total / +24 ms TTFT (~1%) | 0–4 ms |
 
-### 6.5 Caveats
+### 6.7 Caveats
 * **Low traffic.** At ~2 QPS, ~45% of requests took a ~80 ms slower path inside the gateway; at 100–150 QPS that
   dropped to < 1%. Benchmark at your real traffic level.
 * **Far tail.** Gateway processing P99.9 was ~158 ms: rare slow requests remain. One 150 QPS run also had 30 read
   timeouts (> 60 s) on gateway paths within a 13-minute window; the other long runs had at most one timeout each.
-* **Network is most of it.** About 25 of the ~29 ms is the two network legs, which depend on how your clients reach
+* **Network is most of it.** About 25 of the ~28 ms is the two network legs, which depend on how your clients reach
   the workspace endpoint (e.g. public internet vs. PrivateLink) and on co-location with Bedrock.
 * **Sequential calls add up.** The overhead is per call: an agent making 20 sequential LLM calls adds ~0.6 s.
+* **Databricks-hosted results are environment-specific.** They compare the Databricks-hosted models with *our*
+  Bedrock account in us-east-1 at one point in time; measure in your own workspace and account (§3).
+
+Reproduce (per model target, §3.4–3.5):
+```bash
+databricks bundle run ugbench_benchmark -p <profile> -t <target> --params qps=117,duration_s=1800,run_id=<name>              # 6.1, 6.2
+databricks bundle run ugbench_benchmark -p <profile> -t <target> --params workload=throughput,qps=14,duration_s=600,run_id=<name>  # 6.3
+```
 
 ---
 

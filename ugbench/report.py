@@ -37,6 +37,7 @@ LABELS = {
     "ug:inference_table": "Unity Gateway: + inference table",
     "ug:rate_limits": "Unity Gateway: + rate limits",
     "ug:all_features": "Unity Gateway: + inference table + rate limits",
+    "dbx_hosted:ug": "Unity Gateway: Databricks-hosted model",
     "se:baseline": "Serving endpoint: no features",
     "se:usage_tracking": "Serving endpoint: + usage tracking",
     "se:inference_tables": "Serving endpoint: + inference tables",
@@ -191,6 +192,43 @@ def table_cmp(cmp: pd.DataFrame, kind: str) -> pd.DataFrame:
     })
 
 
+def streaming_sections(df: pd.DataFrame, n_boot: int = 500) -> list:
+    """Time to first token and output speed, when the run streamed (workload `throughput` or --stream)."""
+    if "ttft_ms" not in df or df["ttft_ms"].dropna().empty:
+        return []
+    ok = df[df["ok"] == 1]
+    rows = []
+    for tgt, g in ok.groupby("target", sort=False):
+        ttft, tps, lat = g["ttft_ms"].dropna(), g["output_tps"].dropna() if "output_tps" in g else pd.Series(dtype=float), g["latency_ms"].dropna()
+        rows.append({"Target": label(tgt),
+                     "TTFT P50 (ms)": f"{ttft.median():.0f}" if len(ttft) else "n/a",
+                     "TTFT P90 (ms)": f"{ttft.quantile(.9):.0f}" if len(ttft) else "n/a",
+                     "Output tok/s P50": f"{tps.median():.1f}" if len(tps) else "n/a",
+                     "Output tok/s P10 (slow)": f"{tps.quantile(.1):.1f}" if len(tps) else "n/a",
+                     "Total P50 (ms)": f"{lat.median():.0f}" if len(lat) else "n/a",
+                     "Output tokens P50": f"{g['output_tokens'].median():.0f}" if g["output_tokens"].notna().any() else "n/a"})
+    per_target = pd.DataFrame(rows)
+    deltas = []
+    targets = list(dict.fromkeys(df["target"]))
+    for t, ref, kind in stats.default_comparisons(targets):
+        if kind not in ("vs_direct", "hosted_vs_bedrock"):
+            continue
+        a = stats.compare(df, t, ref, metric="ttft_ms", n_boot=n_boot)
+        b = stats.compare(df, t, ref, metric="output_tps", n_boot=n_boot) if "output_tps" in df else {}
+        deltas.append({"Target": label(t), "vs": label(ref),
+                       "TTFT, paired median delta (ms) [95% CI]": _fmt_ci(a.get("paired_median"), a.get("paired_median_lo"), a.get("paired_median_hi")),
+                       "Output speed, paired median delta (tok/s) [95% CI]": _fmt_ci(b.get("paired_median"), b.get("paired_median_lo"), b.get("paired_median_hi"))})
+    return [
+        ("Streaming: time to first token and output speed", [
+            "TTFT = time from sending the request to the first text token. Output speed = tokens after the first, "
+            "divided by the time after the first token (the Artificial Analysis definition). Higher tok/s is "
+            "better; P10 is the slow tail."], per_target),
+        ("Streaming: difference vs. reference (paired)", [
+            "Within each round, the path minus its reference, then the median. TTFT: positive = later first token. "
+            "Output speed: negative = slower token delivery."], pd.DataFrame(deltas)),
+    ]
+
+
 def table_server(srv: pd.DataFrame) -> pd.DataFrame:
     if srv is None or srv.empty:
         return pd.DataFrame()
@@ -324,6 +362,13 @@ def build_report(run_dir: str, n_boot: int = 2000, metric: str = "latency_ms") -
         ("Incremental cost of gateway features", [
             "Each variant compared with the same path and no features."], table_cmp(cmp, "vs_baseline")),
     ]
+    if metric == "latency_ms":
+        sections += streaming_sections(df)
+    if not cmp.empty and (cmp["kind"] == "hosted_vs_bedrock").any():
+        sections.append(("Databricks-hosted model vs. your Bedrock (both through Unity Gateway)", [
+            "Same gateway, API and request; only the backend differs: the Databricks-hosted copy of the model "
+            "(Foundation Model API, pay-per-token) vs. the model in your own Bedrock account. Positive = the "
+            "Databricks-hosted path is slower."], table_cmp(cmp, "hosted_vs_bedrock")))
     if srv is not None and not srv.empty:
         sections.append(("Server-side breakdown (system.ai_gateway.usage)", [
             "Gateway-internal = gateway total latency minus time spent waiting on Bedrock. This is "

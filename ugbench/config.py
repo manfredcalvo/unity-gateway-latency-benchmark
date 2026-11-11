@@ -28,16 +28,25 @@ _CONTEXT = (
 )
 
 WORKLOAD_PROFILES: dict[str, dict] = {
-    "tiny": {"prompt": "Reply with exactly one word: OK", "max_tokens": 5},
+    "tiny": {"prompt": "Reply with exactly one word: OK", "max_tokens": 5, "stream": False},
     # ~565 input tokens (measured), same 5-token reply: measures the effect of request size on the gateway path
     # while staying well inside a 5M tokens/min quota at 100 QPS.
     "large_prompt": {"prompt": _CONTEXT * 4 + "\n\nIgnore the notes above. Reply with exactly one word: OK",
-                     "max_tokens": 5},
+                     "max_tokens": 5, "stream": False},
     "realistic": {
         "prompt": ("Write a detailed, roughly 600-word technical explanation of how a distributed database "
                    "replicates data across regions, covering consensus, conflict resolution and failure "
                    "handling. Write in plain paragraphs without headings or lists."),
         "max_tokens": 300,
+    },
+    # Streaming output speed: a long streamed reply on every path. The prompt asks for far more than max_tokens,
+    # so every reply stops at exactly 500 tokens. Reports time to first token and output tokens/s per path.
+    "throughput": {
+        "prompt": ("Write a detailed, roughly 1500-word technical explanation of how a distributed database "
+                   "replicates data across regions, covering consensus, conflict resolution, failure handling "
+                   "and operational practices. Write in plain paragraphs without headings or lists."),
+        "max_tokens": 500,
+        "stream": True,
     },
 }
 
@@ -123,6 +132,9 @@ DEFAULTS: dict[str, Any] = {
         #   anthropic_messages -> /ai-gateway/anthropic/v1/messages   (native Claude API)
         "api": "chat_completions",
         "include_provider_service_direct": True,
+        # The same model hosted by Databricks (Foundation Model API, pay-per-token), reached through a UC model
+        # service: <service_prefix>_dbx_hosted. "auto" = databricks-claude-<tier>-<version> from the model ID.
+        "databricks_hosted": {"enabled": True, "model": "auto"},
         "provider_api": "anthropic_messages",
         "rate_limit": {"requests_per_minute": 100000, "tokens_per_minute": None},
         "variants": {
@@ -219,6 +231,17 @@ class Target:
     params: dict[str, Any] = field(default_factory=dict)
 
 
+def databricks_hosted_model(cfg: dict) -> str | None:
+    """Endpoint name of the Databricks-hosted copy of the model, or None if that path is disabled."""
+    dh = cfg["unity_gateway"].get("databricks_hosted") or {}
+    if not dh.get("enabled"):
+        return None
+    if dh.get("model") and dh["model"] != "auto":
+        return dh["model"]
+    from .models import databricks_hosted_name
+    return databricks_hosted_name(cfg["aws"]["bedrock_model_id"])
+
+
 def ug_service_id(cfg: dict, variant: str) -> str:
     return f"{cfg['unity_gateway']['service_prefix']}_{variant}"
 
@@ -287,6 +310,11 @@ def _build_raw_targets(cfg: dict) -> list[Target]:
             targets.append(Target(
                 f"ug:{variant}", "ug_model_service", "unity_gateway", features,
                 params={"service": ug_fqn(cfg, ug_service_id(cfg, variant)), "api": ug["api"]}))
+        if databricks_hosted_model(cfg):
+            targets.append(Target(
+                "dbx_hosted:ug", "ug_model_service", "unity_gateway", ["databricks_hosted"],
+                params={"service": ug_fqn(cfg, ug_service_id(cfg, "dbx_hosted")), "api": ug["api"],
+                        "hosted_model": databricks_hosted_model(cfg)}))
 
     se = cfg["serving_endpoints"]
     if se.get("enabled"):

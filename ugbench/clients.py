@@ -214,6 +214,7 @@ class DatabricksHttpClient(BaseClient):
             body["model"] = model
         if w["stream"]:
             body["stream"] = True
+            body["stream_options"] = {"include_usage": True}   # final chunk carries the token count
         return body
 
     def _anthropic_body(self, model: str) -> dict:
@@ -269,8 +270,14 @@ class DatabricksHttpClient(BaseClient):
             if self.workload["stream"] and r.status_code == 200:
                 chunks = []
                 for line in r.iter_lines():
-                    if ttft is None and line.startswith("data:") and self._is_content(line[5:].strip()):
-                        ttft = time.perf_counter_ns()
+                    if line.startswith("data:"):
+                        ev = self._event(line[5:].strip())
+                        if ev is not None:
+                            if ttft is None and self._is_content_event(ev):
+                                ttft = time.perf_counter_ns()
+                            tok = self._event_output_tokens(ev)
+                            if tok is not None:
+                                out["output_tokens"] = tok
                     chunks.append(line)
                 raw = "\n".join(chunks).encode()
             else:
@@ -286,17 +293,32 @@ class DatabricksHttpClient(BaseClient):
             out["output_tokens"] = self._output_tokens(raw)
         return out
 
-    def _is_content(self, data: str) -> bool:
+    @staticmethod
+    def _event(data: str):
         if not data or data == "[DONE]":
-            return False
+            return None
         try:
-            ev = json.loads(data)
+            return json.loads(data)
         except ValueError:
-            return False
+            return None
+
+    def _is_content_event(self, ev: dict) -> bool:
         if self.style == "anthropic":
-            return ev.get("type") == "content_block_delta"
+            return ev.get("type") == "content_block_delta" and (ev.get("delta") or {}).get("type", "text_delta") == "text_delta"
         ch = ev.get("choices") or []
         return bool(ch and (ch[0].get("delta") or {}).get("content"))
+
+    def _event_output_tokens(self, ev: dict):
+        if self.style == "anthropic":
+            if ev.get("type") == "message_delta":
+                return (ev.get("usage") or {}).get("output_tokens")
+            return None
+        usage = ev.get("usage") or {}
+        return usage.get("completion_tokens")
+
+    def _is_content(self, data: str) -> bool:
+        ev = self._event(data)
+        return ev is not None and self._is_content_event(ev)
 
     def _output_tokens(self, raw: bytes):
         try:
@@ -332,6 +354,11 @@ class MockClient(BaseClient):
             time.sleep(lat / 1000)
         if rng.random() < p.get("error_rate", 0.0):
             return {"latency_ms": lat, "status": 503, "error": "mock error"}
+        if self.workload.get("stream"):
+            n = int(self.workload.get("max_tokens") or 1)
+            ttft = lat * 0.2
+            return {"latency_ms": lat, "ttfb_ms": ttft, "ttft_ms": ttft, "status": 200, "output_tokens": n,
+                    "provider_latency_ms": provider}
         return {"latency_ms": lat, "ttfb_ms": lat, "status": 200, "output_tokens": 1,
                 "provider_latency_ms": provider}
 

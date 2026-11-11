@@ -40,18 +40,18 @@ def main(argv=None):
 
     p = sub.add_parser("probe", help="send one request per target and print status, latency, headers")
     p.add_argument("--layer", choices=["raw", "strands", "both"], help="client stack to benchmark")
-    p.add_argument("--workload", choices=["tiny", "large_prompt", "realistic"], help="workload preset (prompt + max_tokens)")
+    p.add_argument("--workload", choices=["tiny", "large_prompt", "realistic", "throughput"], help="workload preset (prompt + max_tokens; throughput = 500 streamed tokens)")
     p.add_argument("--only", nargs="*")
 
     h = sub.add_parser("health", help="send N requests per target; exit 1 unless every target is 100%% OK")
     h.add_argument("--layer", choices=["raw", "strands", "both"], help="client stack to benchmark")
-    h.add_argument("--workload", choices=["tiny", "large_prompt", "realistic"], help="workload preset (prompt + max_tokens)")
+    h.add_argument("--workload", choices=["tiny", "large_prompt", "realistic", "throughput"], help="workload preset (prompt + max_tokens; throughput = 500 streamed tokens)")
     h.add_argument("--only", nargs="*")
     h.add_argument("-n", type=int, default=30)
 
     r = sub.add_parser("run", help="run the benchmark")
     r.add_argument("--layer", choices=["raw", "strands", "both"], help="client stack to benchmark")
-    r.add_argument("--workload", choices=["tiny", "large_prompt", "realistic"], help="workload preset (prompt + max_tokens)")
+    r.add_argument("--workload", choices=["tiny", "large_prompt", "realistic", "throughput"], help="workload preset (prompt + max_tokens; throughput = 500 streamed tokens)")
     r.add_argument("--only", nargs="*", help="target names or groups (direct, unity_gateway, serving_endpoint)")
     r.add_argument("--rounds", type=int)
     r.add_argument("--warmup", type=int)
@@ -67,7 +67,7 @@ def main(argv=None):
 
     a = sub.add_parser("report", help="(re)build report for a run directory")
     a.add_argument("run_dir", nargs="?")
-    a.add_argument("--metric", default="latency_ms", choices=["latency_ms", "ttfb_ms", "ttft_ms"])
+    a.add_argument("--metric", default="latency_ms", choices=["latency_ms", "ttfb_ms", "ttft_ms", "output_tps"])
     a.add_argument("--boot", type=int, default=2000)
 
     v = sub.add_parser("server-stats", help="pull system.ai_gateway.usage rows for a run (needs a SQL warehouse)")

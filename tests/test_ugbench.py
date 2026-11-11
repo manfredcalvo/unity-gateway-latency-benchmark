@@ -332,3 +332,54 @@ def test_model_rules(model_id, slug, temp_sent, thinking, effort):
     assert parse(model_id).slug == slug
     f = request_fields(real_cfg(aws={"bedrock_model_id": model_id}))
     assert (f["temperature"] is not None) == temp_sent and f["thinking"] == thinking and f["effort"] == effort
+
+
+def test_databricks_hosted_path():
+    from ugbench.models import databricks_hosted_name
+
+    assert databricks_hosted_name("us.anthropic.claude-sonnet-5-5") == "databricks-claude-sonnet-5-5"
+    assert databricks_hosted_name("anthropic.claude-haiku-4-5-20251001-v1:0") == "databricks-claude-haiku-4-5"
+    assert databricks_hosted_name("global.anthropic.claude-opus-5") == "databricks-claude-opus-5"
+    cfg = real_cfg(aws={"bedrock_model_id": "us.anthropic.claude-opus-5-5"})
+    t = next(t for t in build_targets(cfg) if t.name == "dbx_hosted:ug")
+    assert t.kind == "ug_model_service" and t.params["service"] == "main.bench.ugbench_opus_5_5_dbx_hosted"
+    assert t.params["hosted_model"] == "databricks-claude-opus-5-5"
+    comps = stats.default_comparisons([x.name for x in build_targets(cfg)])
+    assert ("dbx_hosted:ug", "ug:baseline", "hosted_vs_bedrock") in comps
+    assert ("dbx_hosted:ug", "bedrock_direct", "vs_direct") in comps
+    assert not any(c[0] == "dbx_hosted:ug" and c[2] == "vs_baseline" for c in comps)
+    off = real_cfg(unity_gateway={"databricks_hosted": {"enabled": False}})
+    assert "dbx_hosted:ug" not in [x.name for x in build_targets(off)]
+
+
+def test_streaming_output_tokens_and_speed():
+    from ugbench.runner import output_tps
+
+    def handler(req):
+        body = json.loads(req.content)
+        assert body["stream"] is True and body["max_tokens"] == 500
+        return httpx.Response(200, content=_anthropic_sse(("a",) * 20, out_tokens=500),
+                              headers={"content-type": "text/event-stream"})
+
+    cfg = real_cfg(unity_gateway={"api": "anthropic_messages"})
+    from ugbench.config import apply_workload_profile
+    apply_workload_profile(cfg, "throughput")
+    out = _client(cfg, "ug:baseline", handler).call(0, {})
+    assert out["status"] == 200 and out["output_tokens"] == 500 and out["ttft_ms"] <= out["latency_ms"]
+    assert output_tps({"output_tokens": 500, "latency_ms": 5100.0, "ttft_ms": 100.0}) == pytest.approx(99.8)
+    assert output_tps({"output_tokens": 4, "latency_ms": 300.0, "ttft_ms": None}) is None
+
+
+def test_throughput_report_mock(tmp_path):
+    from ugbench.config import apply_workload_profile, load_config
+    from ugbench.report import build_report
+    from ugbench.runner import run_benchmark
+
+    cfg = load_config(os.path.join(ROOT, "config.mock.yaml"))
+    apply_workload_profile(cfg, "throughput")
+    cfg["run"].update(rounds=60, warmup_rounds=2, output_dir=str(tmp_path))
+    out = run_benchmark(cfg, build_targets(cfg), run_id="tp")
+    raw = pd.read_csv(os.path.join(out, "raw.csv"))
+    assert raw[raw.ok == 1]["output_tps"].notna().all()
+    md = open(build_report(out, n_boot=100)["md"]).read()
+    assert "Streaming: time to first token and output speed" in md and "Output tok/s P50" in md

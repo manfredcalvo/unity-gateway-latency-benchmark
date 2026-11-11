@@ -47,6 +47,16 @@ def parse(model_id: str) -> ModelInfo:
     return ModelInfo(model_id, m["tier"], (int(m["major"]), int(m["minor"] or 0)))
 
 
+def databricks_hosted_name(model_id: str) -> str | None:
+    """Databricks-hosted (Foundation Model API) name of the same model: ``us.anthropic.claude-sonnet-5-5`` ->
+    ``databricks-claude-sonnet-5-5`` (UC model ``system.ai.databricks-claude-sonnet-5-5``)."""
+    mi = parse(model_id)
+    if mi.tier == "unknown":
+        return None
+    major, minor = mi.version
+    return f"databricks-claude-{mi.tier}-{major}" + (f"-{minor}" if minor else "")
+
+
 def _accepts_temperature(mi: ModelInfo) -> bool:
     if mi.tier in ("fable", "mythos"):
         return False

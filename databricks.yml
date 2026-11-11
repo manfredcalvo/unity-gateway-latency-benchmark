@@ -40,6 +40,11 @@ variables:
       Short name of the model used in service names, e.g. haiku_4_5, sonnet_5_5, opus_5_5
       (what `ugbench --model <id> targets` prints as the slug)
     default: haiku_4_5
+  databricks_hosted_model:
+    description: >-
+      Databricks-hosted copy of the model (Foundation Model API endpoint / system.ai model), e.g.
+      databricks-claude-sonnet-5-5 (what `ugbench --model <id> targets` prints for dbx_hosted:ug)
+    default: databricks-claude-haiku-4-5
   service_prefix:
     description: Model services are <service_prefix>_{baseline,inference_table,rate_limits,all_features}
     default: ugbench_${var.model_slug}
@@ -109,6 +114,7 @@ targets:
       schema: CHANGE_ME
       bedrock_model_id: us.anthropic.claude-sonnet-5-5
       model_slug: sonnet_5_5
+      databricks_hosted_model: databricks-claude-sonnet-5-5
       service_prefix: ugbench_s55              # explicit names: deployed before names were derived
       provider_service: ugbench_s55_bedrock
       inference_table_prefix: ugbench_s55
@@ -120,6 +126,7 @@ targets:
       schema: CHANGE_ME
       bedrock_model_id: us.anthropic.claude-opus-5-5
       model_slug: opus_5_5
+      databricks_hosted_model: databricks-claude-opus-5-5
 
   # ---- Template: add a model ---------------------------------------------------------------------------
   # Copy, rename, and set the model. Names (ugbench_<model_slug>_*) follow automatically.
@@ -130,6 +137,7 @@ targets:
   #       schema: CHANGE_ME
   #       bedrock_model_id: us.anthropic.claude-opus-5-5
   #       model_slug: opus_5_5
+  #       databricks_hosted_model: databricks-claude-opus-5-5
   #
   #   opus_5_5_sc:                                # Option A (service credential): the bundle creates the provider
   #     variables:
@@ -137,6 +145,7 @@ targets:
   #       schema: CHANGE_ME
   #       bedrock_model_id: us.anthropic.claude-opus-5-5
   #       model_slug: opus_5_5
+  #       databricks_hosted_model: databricks-claude-opus-5-5
   #       bedrock_service_credential: CHANGE_ME
   #       provider_ref: ${resources.model_provider_services.bedrock.model_provider_service_id}
   #     resources: *sc_provider

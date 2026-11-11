@@ -56,3 +56,17 @@ resources:
           parent: schemas/${var.catalog}.${var.schema}
           table_name_prefix: ${var.inference_table_prefix}_all_features
         rate_limits: *limits
+
+    # The same model hosted by Databricks (Foundation Model API, pay-per-token), behind a model service with no
+    # optional features. Compared with ug:baseline, only the backend differs: Databricks-hosted vs. your Bedrock.
+    dbx_hosted:
+      parent: schemas/${var.catalog}.${var.schema}
+      model_service_id: ${var.service_prefix}_dbx_hosted
+      comment: "ugbench: Databricks-hosted ${var.databricks_hosted_model} (pay-per-token)"
+      config:
+        routing:
+          destinations:
+            - name: databricks_hosted
+              destination_type: DESTINATION_TYPE_PAY_PER_TOKEN_FOUNDATION_MODEL
+              pay_per_token_config:
+                model: models/system.ai.${var.databricks_hosted_model}

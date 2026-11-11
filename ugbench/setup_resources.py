@@ -26,7 +26,7 @@ from urllib.parse import quote
 
 from databricks.sdk import WorkspaceClient
 
-from .config import se_endpoint_name, ug_fqn, ug_service_id
+from .config import databricks_hosted_model, se_endpoint_name, ug_fqn, ug_service_id
 
 UC = "/api/2.1/unity-catalog"
 
@@ -151,6 +151,19 @@ def setup_unity_gateway(cfg: dict, w: WorkspaceClient, recreate: bool = False, u
 
     if provider_only:
         return  # the bundle (resources/ugbench_services.yml) manages the model services
+    hosted = databricks_hosted_model(cfg)
+    if hosted:
+        sid = ug_service_id(cfg, "dbx_hosted")
+        path = f"{UC}/model-services/{ug_fqn(cfg, sid)}"
+        conf = {"routing": {"destinations": [{
+            "name": "databricks_hosted", "destination_type": "DESTINATION_TYPE_PAY_PER_TOKEN_FOUNDATION_MODEL",
+            "pay_per_token_config": {"model": f"models/system.ai.{hosted}"}}]}}
+        if _exists(w, path):
+            w.api_client.do("PATCH", path, query={"update_mask": "config.routing.destinations"}, body={"config": conf})
+        else:
+            print(f"[setup] creating model service {ug_fqn(cfg, sid)} -> Databricks-hosted {hosted}")
+            w.api_client.do("POST", f"{UC}/model-services", query={"parent": parent, "model_service_id": sid},
+                            body={"comment": f"ugbench: Databricks-hosted {hosted} (pay-per-token)", "config": conf})
     for variant, feats in ug["variants"].items():
         sid = ug_service_id(cfg, variant)
         fqn = ug_fqn(cfg, sid)
@@ -174,7 +187,7 @@ def setup_unity_gateway(cfg: dict, w: WorkspaceClient, recreate: bool = False, u
 
 def teardown_unity_gateway(cfg: dict, w: WorkspaceClient) -> None:
     ug = cfg["unity_gateway"]
-    for variant in ug["variants"]:
+    for variant in list(ug["variants"]) + ["dbx_hosted"]:
         fqn = ug_fqn(cfg, ug_service_id(cfg, variant))
         path = f"{UC}/model-services/{fqn}"
         if _exists(w, path):

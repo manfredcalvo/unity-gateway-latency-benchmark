@@ -104,6 +104,9 @@ def default_comparisons(targets: list[str]) -> list[tuple[str, str, str]]:
         ref = direct_ref[_layer(t)]
         if t != ref and ref in targets:
             comps.append((t, ref, "vs_direct"))
+    if "dbx_hosted:ug" in targets and "ug:baseline" in targets:
+        # Same gateway, same API, only the backend differs: Databricks-hosted model vs. the customer's Bedrock.
+        comps.append(("dbx_hosted:ug", "ug:baseline", "hosted_vs_bedrock"))
     for prefix in ("ug:", "se:", "mock:", "strands:ug:"):
         base = f"{prefix}baseline"
         if base in targets:

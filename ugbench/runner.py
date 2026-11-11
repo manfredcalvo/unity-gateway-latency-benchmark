@@ -42,8 +42,20 @@ from .config import Target
 
 FIELDS = ["run_id", "phase", "round", "seq", "worker", "target", "group", "features",
           "start_utc", "latency_ms", "ttfb_ms", "ttft_ms", "provider_latency_ms",
-          "status", "ok", "output_tokens", "request_id", "error", "sched_offset_ms", "send_lag_ms",
+          "status", "ok", "output_tokens", "output_tps", "request_id", "error", "sched_offset_ms", "send_lag_ms",
           "latency_from_sched_ms"]
+
+
+def output_tps(res: dict) -> float | None:
+    """Streaming output speed: tokens after the first, divided by the time after the first token
+    (the Artificial Analysis definition of output speed). None unless the reply streamed > 1 token."""
+    tok, lat, ttft = res.get("output_tokens"), res.get("latency_ms"), res.get("ttft_ms")
+    try:
+        if tok and ttft is not None and lat and float(tok) > 1 and lat > ttft:
+            return (float(tok) - 1) / ((lat - ttft) / 1000)
+    except (TypeError, ValueError):
+        pass
+    return None
 
 
 def _env_metadata(cfg: dict) -> dict:
@@ -152,6 +164,7 @@ def run_benchmark(cfg: dict, targets: list[Target], run_id: str | None = None,
             if os.environ.get("UGBENCH_DEBUG"):
                 traceback.print_exc()
         row.update(res)
+        row["output_tps"] = output_tps(res)
         if sched is not None and res.get("latency_ms") is not None:
             row["latency_from_sched_ms"] = row["send_lag_ms"] + res["latency_ms"]
         row["ok"] = int(res.get("status") == 200 and not res.get("error"))

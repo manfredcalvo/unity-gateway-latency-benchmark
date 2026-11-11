@@ -35,7 +35,8 @@ dbutils.widgets.dropdown("arrival", "poisson", ["poisson", "uniform"], "Open-loo
 dbutils.widgets.dropdown("setup", "yes", ["yes", "no"], "Create/update UG services first")
 dbutils.widgets.text("results_volume", "", "Optional: /Volumes/<cat>/<schema>/<vol> to copy results")
 dbutils.widgets.dropdown("layer", "raw", ["raw", "strands", "both"], "Client stack: raw | strands (Strands + Anthropic SDK)")
-dbutils.widgets.dropdown("workload", "tiny", ["tiny", "large_prompt", "realistic"], "Workload preset (tiny = 5 tokens, realistic = 300)")
+dbutils.widgets.dropdown("workload", "tiny", ["tiny", "large_prompt", "realistic", "throughput"],
+                         "Workload preset (tiny = 5 tokens, realistic = 300, throughput = 500 streamed)")
 dbutils.widgets.text("procs", "1", "Client processes for open-loop runs (int or 'auto')")
 dbutils.widgets.text("health_n", "30", "Health gate: requests per target before the run (0 = 1 probe, no gate)")
 # Set by the bundle job (from databricks.yml variables) so the job benchmarks exactly the services the bundle
