@@ -113,6 +113,14 @@ targets:
       provider_service: ugbench_s55_bedrock
       inference_table_prefix: ugbench_s55
 
+  # Claude Opus 5.5 (Option B). Names are derived from model_slug: ugbench_opus_5_5_*.
+  opus_5_5:
+    variables:
+      catalog: CHANGE_ME
+      schema: CHANGE_ME
+      bedrock_model_id: us.anthropic.claude-opus-5-5
+      model_slug: opus_5_5
+
   # ---- Template: add a model ---------------------------------------------------------------------------
   # Copy, rename, and set the model. Names (ugbench_<model_slug>_*) follow automatically.
   #

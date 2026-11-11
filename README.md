@@ -1,18 +1,17 @@
 # Unity Gateway latency benchmark: Amazon Bedrock direct vs. through Databricks
 
-**Question answered:** if your application calls an LLM on Amazon Bedrock *through Databricks Unity Gateway*
-instead of calling Bedrock directly, how much latency is added, and what do gateway features (inference tables,
-rate limits, usage tracking) add on top?
-
-**Short answer** (Claude Haiku 4.5, us-east-1, Nov 2026, details in [Results](#6-results-we-measured)):
-Unity Gateway's own processing is **2 ms at the median and 4–8 ms at P99**. End to end, a client in the same AWS
-region sees **about +28 ms**. Almost all of that is the extra network hop. Inference tables and rate limits add
-**no measurable latency** (< 1 ms).
+**What it measures:** if your application calls an LLM on Amazon Bedrock *through Databricks Unity Gateway*
+instead of calling Bedrock directly, how much latency is added, and what gateway features (inference tables,
+rate limits, usage tracking) add on top. The same request is sent on every path at a fixed rate, interleaved, and
+the difference is reported with confidence intervals and a server-side breakdown.
 
 This repo (`ugbench`) is a reproducible tool. Point it at **your** Databricks workspace, **your** AWS account and
 **any Anthropic Claude model on Bedrock** (Haiku, Sonnet, Opus, any version), and it produces the same report from
 your environment, with every raw request kept for audit. The model is a single setting: service names and
 model-specific request fields follow from it ([3.3](#33-choose-the-model)).
+
+This README is a replication guide: follow §2–3 to run it in your environment, §4 to read the report, and compare
+your numbers with the **[reference results](#6-reference-results-what-you-should-expect)** we measured (§6).
 
 ```
                        ┌──────────────── bedrock_direct (boto3 Converse) ────────────────┐
@@ -35,7 +34,7 @@ model-specific request fields follow from it ([3.3](#33-choose-the-model)).
    [choose the model](#33-choose-the-model), configure, deploy, run
 4. [Reading the report](#4-reading-the-report)
 5. [Customer session plan](#5-customer-session-plan-6090-min)
-6. [Results we measured](#6-results-we-measured)
+6. [Reference results: what you should expect](#6-reference-results-what-you-should-expect)
 7. [Troubleshooting](#7-troubleshooting)
 8. [Cleanup](#8-cleanup)
 
@@ -359,24 +358,59 @@ Interpretation rules:
 
 ---
 
-## 6. Results we measured
+## 6. Reference results: what you should expect
 
-Environment: Databricks workspace and Bedrock both in **us-east-1**, model **Claude Haiku 4.5**
-(cross-region inference profile), Anthropic Messages API, Nov 2026.
+We ran the steps in §3 in our own environment. Use these numbers as a reference to check yours: the gateway
+overhead should land in the same range, and the features should be indistinguishable from zero. Absolute
+latencies depend on the model, Bedrock load, and how your client reaches the workspace (§6.4).
 
-**Headline run: 150 QPS for 20 min, from a Databricks serverless notebook** (180,000 requests, 1 upstream 503, no
-throttling):
+**Environment:** Databricks workspace and Bedrock both in **us-east-1**; client = the bundle job on Databricks
+serverless (§3.7); Anthropic Messages API; US cross-region inference profiles; tiny prompt (4-token reply);
+Nov 2026.
 
-| Path | P50 | P90 | P99 | Added vs. direct (paired median, 95% CI) |
+### 6.1 Model comparison: 100 QPS for 30 minutes, from Databricks
+180,000 requests per model (30,000 per path), interleaved; the client held the rate in every run.
+
+| Model | Bedrock direct P50 / P90 / P99 | Through Unity Gateway P50 / P90 / P99 | **Added (paired median, 95% CI)** | Share of direct P50 | Errors |
+|---|---|---|---|---|---|
+| Claude Haiku 4.5 | 310 / 363 / 665 ms | 339 / 397 / 747 ms | **+29.2 ms** [28.6, 29.8] | 9.4% | 2 |
+| Claude Sonnet 5.5 | 803 / 1047 / 1757 ms | 834 / 1075 / 1768 ms | **+28.9 ms** [27.0, 30.8] | 3.6% | 0 |
+| Claude Opus 5.5 | 890 / 1088 / 1921 ms | 919 / 1126 / 1947 ms | **+28.8 ms** [27.7, 29.9] | 3.2% | 0 |
+
+"Through Unity Gateway" is the model service with no optional features. The provider service alone
+(`ug_provider:direct`) adds the same: +29.5 / +29.1 / +29.0 ms.
+
+**The overhead is a fixed ~29 ms per call, independent of the model.** Bedrock's own latency varies 3x across
+these models; the gateway adds the same amount to each, so its share falls as the model gets slower. P99 deltas
+(not shown) swing by ±100 ms between runs: that is Bedrock's tail, not the gateway (use 6.3 for tail behavior).
+
+**Gateway features, vs. the same model service without them** (paired median, ms, 95% CI):
+
+| Model | + inference table | + rate limits | + both |
+|---|---|---|---|
+| Claude Haiku 4.5 | +0.4 [−0.1, +1.0] | +0.1 [−0.5, +0.7] | +0.2 [−0.4, +0.7] |
+| Claude Sonnet 5.5 | −3.4 [−4.7, −1.6] | −1.5 [−3.3, +0.2] | −1.9 [−3.5, −0.2] |
+| Claude Opus 5.5 | +0.4 [−0.9, +1.5] | +0.6 [−0.5, +2.0] | +0.3 [−0.8, +1.5] |
+
+No feature adds measurable latency on any model. The small negative values for Sonnet 5.5 don't mean the feature
+makes requests faster: they are the size of service-to-service variation when the model itself takes ~800 ms.
+
+Reproduce a row (per model target, §3.4–3.5):
+```bash
+databricks bundle run ugbench_benchmark -p <profile> -t <target> --params qps=100,duration_s=1800,run_id=<name>
+```
+
+### 6.2 Request rate and run length (Claude Haiku 4.5, from Databricks)
+
+| Run | Direct P50 | Added (paired median) | Features | Errors |
 |---|---|---|---|---|
-| Bedrock direct | 295 ms | 340 ms | 614 ms | n/a |
-| Model service, no features | 322 ms | 370 ms | 722 ms | **+27.8 ms** [27.3, 28.2] |
-| + inference table | 323 ms | 370 ms | 657 ms | +27.8 ms [27.3, 28.3] |
-| + rate limits | 323 ms | 371 ms | 664 ms | +28.0 ms [27.5, 28.5] |
-| + inference table + rate limits | 323 ms | 370 ms | 652 ms | +28.1 ms [27.6, 28.6] |
-| Provider service only | 323 ms | 371 ms | 699 ms | +28.1 ms [27.7, 28.6] |
+| 150 QPS, 20 min | 295 ms | +27.8 ms [27.3, 28.2] | < 1 ms | 1 (upstream 503) |
+| 150 QPS, 20 min (second run) | 328 ms | +28.8 ms [28.2, 29.3] | < 1 ms | 31 (30 read timeouts in one 13-min window) |
+| 100 QPS, 30 min | 310 ms | +29.2 ms [28.6, 29.8] | < 0.5 ms | 2 |
+| 100 QPS, 10 min, large prompt (566 input tokens) | 319 ms | +26.8 ms [26.0, 27.5] | < 0.5 ms | 0 |
 
-**Where the +28 ms goes** (server-side, all 150,000 gateway requests):
+### 6.3 Where the ~29 ms goes (server side)
+From `system.ai_gateway.usage` (§3.8), Claude Haiku 4.5, 150 QPS for 20 min, all 150,000 gateway requests:
 
 | Part | Median |
 |---|---|
@@ -384,21 +418,23 @@ throttling):
 | Gateway → Bedrock network leg | 11.0 ms |
 | Client → Databricks network leg | 14.4 ms |
 
-**Other runs**
+### 6.4 Runs from a laptop
+A laptop measures over the internet, so the client → Databricks leg differs from a client inside AWS.
 
-| Run | Added vs. direct (median) | Features |
+| Run | Added (median) | Features |
 |---|---|---|
-| Laptop, 100 QPS, 10 min, tiny prompt | +24 ms | < 1 ms |
-| Laptop, 100 QPS, 5 min, **large prompt (566 tokens)** | +22 ms | < 0.5 ms |
-| Notebook, 100 QPS, 10 min, large prompt | +27 ms | < 0.5 ms |
-| Laptop, Strands + Anthropic SDK, 30 QPS, 300-token replies (experimental layer) | +26 ms total / +24 ms TTFT (~1%) | 0–4 ms |
+| Haiku 4.5, 100 QPS, 10 min, tiny prompt | +24 ms | < 1 ms |
+| Haiku 4.5, 100 QPS, 5 min, large prompt (566 tokens) | +22 ms | < 0.5 ms |
+| Haiku 4.5, Strands + Anthropic SDK, 30 QPS, 300-token replies (experimental layer) | +26 ms total / +24 ms TTFT (~1%) | 0–4 ms |
 
-**Caveats to share openly:**
-* **At very low traffic (~2 QPS), ~45% of requests took a ~80 ms slower path inside the gateway.** At 100–150 QPS
-  that dropped to < 1%. Benchmark at your real traffic level.
-* **Gateway P99.9 is ~158 ms.** Rare slow requests remain in the far tail.
-* **About 25 of the 28 ms is network.** It depends on how your clients reach the workspace endpoint (e.g. public
-  internet vs. PrivateLink).
+### 6.5 Caveats
+* **Low traffic.** At ~2 QPS, ~45% of requests took a ~80 ms slower path inside the gateway; at 100–150 QPS that
+  dropped to < 1%. Benchmark at your real traffic level.
+* **Far tail.** Gateway processing P99.9 was ~158 ms: rare slow requests remain. One 150 QPS run also had 30 read
+  timeouts (> 60 s) on gateway paths within a 13-minute window; the other long runs had at most one timeout each.
+* **Network is most of it.** About 25 of the ~29 ms is the two network legs, which depend on how your clients reach
+  the workspace endpoint (e.g. public internet vs. PrivateLink) and on co-location with Bedrock.
+* **Sequential calls add up.** The overhead is per call: an agent making 20 sequential LLM calls adds ~0.6 s.
 
 ---
 
