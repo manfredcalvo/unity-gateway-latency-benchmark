@@ -8,7 +8,7 @@ import pytest
 
 from ugbench import stats
 from ugbench.clients import DatabricksHttpClient
-from ugbench.config import DEFAULTS, _deep_merge, build_targets
+from ugbench.config import DEFAULTS, _deep_merge, build_targets, set_model
 from ugbench.setup_resources import _model_service_config, _provider_config, _se_ai_gateway
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
@@ -24,9 +24,7 @@ def real_cfg(**over):
                               "inference_table": {"catalog": "main", "schema": "bench"}},
     })
     cfg = _deep_merge(cfg, over)
-    cfg["unity_gateway"]["model"] = cfg["aws"]["bedrock_model_id"]
-    cfg["serving_endpoints"]["model"] = cfg["aws"]["bedrock_model_id"]
-    return cfg
+    return set_model(cfg, cfg["aws"]["bedrock_model_id"])
 
 
 def test_target_expansion():
@@ -44,7 +42,7 @@ def test_resource_payloads():
     base = _model_service_config(cfg, "baseline", {})
     assert "rate_limits" not in base and "inference_table" not in base
     dest = base["routing"]["destinations"][0]["external_model_config"]
-    assert dest["model_provider_service"] == "model-provider-services/main.bench.ugbench_bedrock"
+    assert dest["model_provider_service"] == "model-provider-services/main.bench.ugbench_haiku_4_5_bedrock"
     allf = _model_service_config(cfg, "all_features", {"inference_table": True, "rate_limits": True})
     assert allf["inference_table"]["parent"] == "schemas/main.bench"
     assert {r["key"] for r in allf["rate_limits"]} == {"RATE_LIMIT_KEY_SERVICE", "RATE_LIMIT_KEY_USER_DEFAULT"}
@@ -111,7 +109,7 @@ def test_http_client_chat_completions_and_tags():
     out = c.call(3, {"ugbench_run": "r1", "ugbench_target": "ug:baseline", "ugbench_round": "3"})
     assert out["status"] == 200 and out["output_tokens"] == 1 and out["request_id"] == "abc"
     assert seen["url"].endswith("/ai-gateway/mlflow/v1/chat/completions")
-    assert seen["body"]["model"] == "main.bench.ugbench_baseline"
+    assert seen["body"]["model"] == "main.bench.ugbench_haiku_4_5_baseline"
     assert json.loads(seen["headers"]["databricks-ai-gateway-request-tags"])["ugbench_round"] == "3"
     assert out["latency_ms"] > 0
 
@@ -122,7 +120,7 @@ def test_http_client_provider_service_streaming_ttft():
            "data: {\"type\":\"message_stop\"}\n\n")
 
     def handler(req):
-        assert req.headers["databricks-model-provider-service"] == "main.bench.ugbench_bedrock"
+        assert req.headers["databricks-model-provider-service"] == "main.bench.ugbench_haiku_4_5_bedrock"
         assert req.url.path == "/ai-gateway/anthropic/v1/messages"
         return httpx.Response(200, content=sse.encode(), headers={"content-type": "text/event-stream"})
 
@@ -220,8 +218,8 @@ def test_strands_targets_and_comparisons():
 
 
 @pytest.mark.parametrize("name,expect_model,provider_hdr", [
-    ("strands:ug:baseline", "main.bench.ugbench_baseline", None),
-    ("strands:ug_provider", "us.anthropic.claude-haiku-4-5", "main.bench.ugbench_bedrock"),
+    ("strands:ug:baseline", "main.bench.ugbench_haiku_4_5_baseline", None),
+    ("strands:ug_provider", "us.anthropic.claude-haiku-4-5", "main.bench.ugbench_haiku_4_5_bedrock"),
 ])
 def test_strands_gateway_request_and_ttft(name, expect_model, provider_hdr):
     pytest.importorskip("strands")
@@ -293,3 +291,44 @@ def test_strands_call_inside_running_event_loop():
     asyncio.run(asyncio.sleep(0))
     c.close()
     assert all(o["status"] == 200 and o["ttft_ms"] for o in outs), outs
+
+
+@pytest.mark.parametrize("model,temp,thinking", [
+    ("us.anthropic.claude-haiku-4-5-20251001-v1:0", 0.0, None),
+    ("us.anthropic.claude-sonnet-5-5", None, {"type": "between_tools"}),   # rejects temperature; thinks by default
+])
+def test_model_aware_request_fields(model, temp, thinking):
+    from ugbench.models import request_fields as request_params
+
+    cfg = real_cfg(aws={"bedrock_model_id": model}, unity_gateway={"api": "anthropic_messages"})
+    assert {k: v for k, v in request_params(cfg).items() if k != "effort"} == {"temperature": temp, "thinking": thinking}
+    seen = {}
+
+    def handler(req):
+        seen["body"] = json.loads(req.content)
+        return httpx.Response(200, json={"content": [{"type": "text", "text": "OK"}], "usage": {"output_tokens": 1}})
+
+    _client(cfg, "ug:baseline", handler).call(0, {})
+    assert seen["body"].get("temperature") == temp and seen["body"].get("thinking") == thinking
+    # Explicit override: thinking=None sends nothing, even on a model with an auto default.
+    assert request_params(real_cfg(aws={"bedrock_model_id": model}, workload={"thinking": None}))["thinking"] is None
+
+
+@pytest.mark.parametrize("model_id,slug,temp_sent,thinking,effort", [
+    ("anthropic.claude-haiku-4-5-20251001-v1:0", "haiku_4_5", True, None, None),
+    ("us.anthropic.claude-haiku-4-5-20251001-v1:0", "haiku_4_5", True, None, None),
+    ("us.anthropic.claude-sonnet-4-6", "sonnet_4_6", True, None, None),
+    ("us.anthropic.claude-opus-4-8", "opus_4_8", False, None, None),
+    ("global.anthropic.claude-sonnet-5", "sonnet_5", False, {"type": "disabled"}, None),
+    ("us.anthropic.claude-sonnet-5-5", "sonnet_5_5", False, {"type": "between_tools"}, None),
+    ("us.anthropic.claude-opus-5-5", "opus_5_5", False, None, "low"),
+    ("us.anthropic.claude-haiku-5-5", "haiku_5_5", False, {"type": "disabled"}, None),
+    ("us.anthropic.claude-fable-5-1", "fable_5_1", False, None, "low"),
+    ("us.anthropic.claude-sonnet-6", "sonnet_6", False, {"type": "between_tools"}, None),   # newer: latest rules
+])
+def test_model_rules(model_id, slug, temp_sent, thinking, effort):
+    from ugbench.models import parse, request_fields
+
+    assert parse(model_id).slug == slug
+    f = request_fields(real_cfg(aws={"bedrock_model_id": model_id}))
+    assert (f["temperature"] is not None) == temp_sent and f["thinking"] == thinking and f["effort"] == effort

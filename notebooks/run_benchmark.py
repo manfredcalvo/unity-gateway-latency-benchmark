@@ -63,6 +63,10 @@ from ugbench.config import build_targets, load_config  # noqa: E402
 cfg = load_config(dbutils.widgets.get("config"))
 cfg["databricks"]["profile"] = None          # use the notebook's own auth
 _ug = cfg["unity_gateway"]
+if dbutils.widgets.get("bedrock_model_id"):
+    from ugbench.config import set_model  # noqa: E402
+
+    set_model(cfg, dbutils.widgets.get("bedrock_model_id"))   # first, so explicit names below win
 for widget, key in (("ug_catalog", "catalog"), ("ug_schema", "schema"),
                     ("ug_service_prefix", "service_prefix"), ("ug_provider_service", "provider_service")):
     if dbutils.widgets.get(widget):
@@ -71,8 +75,9 @@ for widget, key in (("ug_catalog", "catalog"), ("ug_schema", "schema"),
             cfg["aws_uc_secrets"][key] = _ug[key]
 if dbutils.widgets.get("aws_region"):
     cfg["aws"]["region"] = dbutils.widgets.get("aws_region")
-if dbutils.widgets.get("bedrock_model_id"):
-    cfg["aws"]["bedrock_model_id"] = _ug["model"] = dbutils.widgets.get("bedrock_model_id")
+from ugbench.models import describe  # noqa: E402
+
+print("request fields:", describe(cfg))
 print(f"Unity Gateway services: {_ug['catalog']}.{_ug['schema']}.{_ug['service_prefix']}_*  "
       f"provider: {_ug['provider_service']}  model: {_ug['model']}  region: {cfg['aws']['region']}")
 cfg["aws"]["profile"] = None

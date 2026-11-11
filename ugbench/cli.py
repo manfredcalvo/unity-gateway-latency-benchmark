@@ -22,6 +22,8 @@ def _latest_run(cfg) -> str:
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="ugbench", description=__doc__)
     ap.add_argument("-c", "--config", default="config.yaml")
+    ap.add_argument("--model", help="Bedrock model ID to benchmark, e.g. us.anthropic.claude-sonnet-5-5 "
+                                    "(overrides aws.bedrock_model_id; names with {model_slug} follow it)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("targets", help="list the targets the config expands to")
@@ -78,12 +80,18 @@ def main(argv=None):
 
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
+    if args.model:
+        from .config import set_model
+        set_model(cfg, args.model)
     if getattr(args, "layer", None):
         cfg["layer"] = args.layer
     if getattr(args, "workload", None):
         from .config import apply_workload_profile
         apply_workload_profile(cfg, args.workload)
 
+    if args.cmd in ("targets", "health", "run", "probe"):
+        from .models import describe
+        print("[model]", describe(cfg))
     if args.cmd == "targets":
         for tg in build_targets(cfg):
             print(f"{tg.name:28s} {tg.kind:22s} features={'+'.join(tg.features) or '-'}  {json.dumps(tg.params)}")

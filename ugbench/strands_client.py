@@ -30,7 +30,7 @@ from typing import Any
 
 import httpx
 
-from .clients import BaseClient, aws_session
+from .clients import BaseClient, _anthropic_extras, aws_session
 from .config import Target
 
 _TAGS: contextvars.ContextVar[dict | None] = contextvars.ContextVar("ugbench_tags", default=None)
@@ -51,6 +51,13 @@ class _DatabricksAuth(httpx.Auth):
         if self.add_tags and tags:
             request.headers["Databricks-Ai-Gateway-Request-Tags"] = json.dumps(tags, separators=(",", ":"))
         yield request
+
+
+def _strands_params(w: dict) -> dict:
+    params = _anthropic_extras(w)
+    if w.get("temperature") is not None:
+        params["temperature"] = w["temperature"]
+    return params
 
 
 def _status_of(exc: BaseException) -> int | None:
@@ -123,7 +130,7 @@ class StrandsClient(BaseClient):
             loop = asyncio.new_event_loop()
             w = self.workload
             model = AnthropicModel(client_args={"api_key": "unused"}, model_id=self.model_id,
-                                   max_tokens=int(w["max_tokens"]), params={"temperature": w["temperature"]})
+                                   max_tokens=int(w["max_tokens"]), params=_strands_params(w))
             # Equivalent to the newer AnthropicModel(client=...) argument; works on strands-agents 1.x.
             model.client = self._anthropic_client()
             st = self._local.st = (loop, model)

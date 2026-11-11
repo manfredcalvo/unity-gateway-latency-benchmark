@@ -74,7 +74,9 @@ DEFAULTS: dict[str, Any] = {
         "prompt": "Reply with exactly one word: OK",
         "system": None,
         "max_tokens": 5,
-        "temperature": 0.0,
+        "temperature": 0.0,         # dropped automatically for models that reject it (ugbench/models.py)
+        "thinking": "auto",         # auto = the model's thinking-off setting; null = send nothing; or a dict
+        "effort": "auto",           # auto = "low" where thinking can't be turned off; null = send nothing
         "stream": False,
     },
     "run": {
@@ -98,8 +100,10 @@ DEFAULTS: dict[str, Any] = {
         "enabled": True,
         "catalog": None,
         "schema": None,
-        "provider_service": "ugbench_bedrock",
-        "service_prefix": "ugbench",
+        # Names may contain {model_slug} (e.g. sonnet_5_5, from aws.bedrock_model_id), so each model gets its
+        # own set of services and switching models is just `--model <bedrock id>`.
+        "provider_service": "ugbench_{model_slug}_bedrock",
+        "service_prefix": "ugbench_{model_slug}",
         "inference_table_prefix": None,   # defaults to service_prefix; tables are <prefix>_<variant>_payload
         # Exactly one of service_credential / access_key must be set for `setup`.
         "bedrock_auth": {
@@ -173,12 +177,28 @@ def load_config(path: str) -> dict:
     # Environment overrides that are handy in CI / notebooks.
     if os.environ.get("UGBENCH_DATABRICKS_PROFILE"):
         cfg["databricks"]["profile"] = os.environ["UGBENCH_DATABRICKS_PROFILE"]
-    ug = cfg["unity_gateway"]
-    ug["model"] = ug["model"] or cfg["aws"]["bedrock_model_id"]
-    se = cfg["serving_endpoints"]
-    se["model"] = se["model"] or cfg["aws"]["bedrock_model_id"]
+    cfg["unity_gateway"]["model"] = cfg["unity_gateway"]["model"] or cfg["aws"]["bedrock_model_id"]
+    cfg["serving_endpoints"]["model"] = cfg["serving_endpoints"]["model"] or cfg["aws"]["bedrock_model_id"]
+    set_model(cfg)
     if cfg["workload"].get("profile"):
         apply_workload_profile(cfg, cfg["workload"]["profile"])
+    return cfg
+
+
+_NAME_KEYS = ("provider_service", "service_prefix", "inference_table_prefix")
+
+
+def set_model(cfg: dict, model_id: str | None = None) -> dict:
+    """Switch the benchmarked model (all paths) and render ``{model_slug}`` in the Unity Gateway names."""
+    from .models import parse
+
+    ug = cfg["unity_gateway"]
+    if model_id:
+        cfg["aws"]["bedrock_model_id"] = ug["model"] = cfg["serving_endpoints"]["model"] = model_id
+    templates = ug.setdefault("_name_templates", {k: ug[k] for k in _NAME_KEYS if ug.get(k)})
+    slug = parse(cfg["aws"]["bedrock_model_id"]).slug
+    for k, t in templates.items():
+        ug[k] = t.replace("{model_slug}", slug)
     return cfg
 
 

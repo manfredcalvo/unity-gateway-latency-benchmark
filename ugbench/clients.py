@@ -43,11 +43,24 @@ def _request_id(headers) -> str | None:
     return None
 
 
+def _anthropic_extras(w: dict) -> dict:
+    """Model-specific Anthropic request fields (see ugbench/models.py), identical on every path."""
+    out: dict[str, Any] = {}
+    if w.get("thinking"):
+        out["thinking"] = w["thinking"]
+    if w.get("effort"):
+        out["output_config"] = {"effort": w["effort"]}
+    return out
+
+
 class BaseClient:
     def __init__(self, target: Target, cfg: dict):
         self.target = target
         self.cfg = cfg
-        self.workload = cfg["workload"]
+        from .models import request_fields
+
+        # Same sampling/thinking/effort fields on every path, resolved for the configured model.
+        self.workload = {**cfg["workload"], **request_fields(cfg)}
         self.timeout = cfg["run"]["timeout_s"]
 
     def call(self, round_id: int, tags: dict[str, str]) -> dict[str, Any]:
@@ -120,8 +133,13 @@ class BedrockClient(BaseClient):
         kw: dict[str, Any] = {
             "modelId": self.model_id,
             "messages": [{"role": "user", "content": [{"text": w["prompt"]}]}],
-            "inferenceConfig": {"maxTokens": w["max_tokens"], "temperature": w["temperature"]},
+            "inferenceConfig": {"maxTokens": w["max_tokens"]},
         }
+        if w["temperature"] is not None:
+            kw["inferenceConfig"]["temperature"] = w["temperature"]
+        extra = _anthropic_extras(w)
+        if extra:
+            kw["additionalModelRequestFields"] = extra   # passed through to the Anthropic request body
         if w.get("system"):
             kw["system"] = [{"text": w["system"]}]
         return kw
@@ -188,7 +206,10 @@ class DatabricksHttpClient(BaseClient):
         msgs = self._messages()
         if w.get("system"):
             msgs = [{"role": "system", "content": w["system"]}] + msgs
-        body = {"messages": msgs, "max_tokens": w["max_tokens"], "temperature": w["temperature"]}
+        body = {"messages": msgs, "max_tokens": w["max_tokens"]}
+        if w["temperature"] is not None:
+            body["temperature"] = w["temperature"]
+        body.update(_anthropic_extras(w))
         if model:
             body["model"] = model
         if w["stream"]:
@@ -197,8 +218,10 @@ class DatabricksHttpClient(BaseClient):
 
     def _anthropic_body(self, model: str) -> dict:
         w = self.workload
-        body = {"model": model, "max_tokens": w["max_tokens"], "temperature": w["temperature"],
-                "messages": self._messages()}
+        body = {"model": model, "max_tokens": w["max_tokens"], "messages": self._messages()}
+        if w["temperature"] is not None:
+            body["temperature"] = w["temperature"]
+        body.update(_anthropic_extras(w))
         if w.get("system"):
             body["system"] = w["system"]
         if w["stream"]:

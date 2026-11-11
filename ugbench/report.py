@@ -221,6 +221,14 @@ def _html_table(df: pd.DataFrame) -> str:
     return df.to_html(index=False, border=0, classes="t", escape=True)
 
 
+def _request_fields_line(cfg: dict) -> str:
+    try:
+        from .models import describe
+        return describe(cfg).split(": ", 1)[1]
+    except Exception:  # noqa: BLE001 - older meta.json without the fields
+        return f"temperature {cfg.get('workload', {}).get('temperature')}"
+
+
 def _load_line(meta: dict, df: pd.DataFrame) -> str:
     load = meta.get("load") or {"mode": "closed_loop", "concurrency": meta["config"]["run"]["concurrency"]}
     rounds = int(df["round"].nunique())
@@ -300,8 +308,9 @@ def build_report(run_dir: str, n_boot: int = 2000, metric: str = "latency_ms") -
         ("Test setup", [
             f"Run `{meta['run_id']}`, {meta.get('started_utc', '')[:19]} to {meta.get('finished_utc', '')[:19]} UTC.",
             f"Model: `{cfg['aws'].get('bedrock_model_id')}` in AWS region `{cfg['aws']['region']}`.",
-            f"Workload: {w['max_tokens']} max output tokens, temperature {w['temperature']}, "
-            f"streaming={'on' if w['stream'] else 'off'}, prompt: \"{w['prompt'][:80]}\".",
+            f"Workload: {w['max_tokens']} max output tokens, streaming={'on' if w['stream'] else 'off'}, "
+            f"prompt: \"{w['prompt'][:80]}\".",
+            f"Request fields (same on every path): {_request_fields_line(cfg)}.",
             _load_line(meta, df),
             f"Client: {env.get('hostname')} ({env.get('platform')}), AZ: {env.get('client_az') or 'unknown'}, "
             f"Databricks runtime: {env.get('databricks_runtime') or 'no'}.",

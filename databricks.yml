@@ -4,7 +4,10 @@
 #   databricks bundle run ugbench_benchmark -p <profile> --params qps=150,duration_s=1200
 #   databricks bundle destroy -p <profile> [-t dev_uc_secrets]    # services + job (inference tables are kept)
 #
-# Site-specific values live in the target's `variables` below (or pass --var name=value / BUNDLE_VAR_<name>).
+# Any Anthropic model on Bedrock: one target per model (copy the template at the bottom), each with its own
+# services named after the model (ugbench_<model_slug>_*), so models can be compared side by side.
+# Site-specific values live in the target's `variables` (or --var name=value, or the git-ignored
+# .databricks/bundle/<target>/variable-overrides.json).
 # No workspace profile is hardcoded: pass -p <profile>.
 bundle:
   name: ugbench
@@ -30,31 +33,54 @@ variables:
     description: Bedrock region; must be the workspace's region
     default: us-east-1
   bedrock_model_id:
-    description: Bedrock model / inference-profile ID used on every path
+    description: Bedrock model / inference-profile ID used on every path (any Anthropic Claude model)
     default: us.anthropic.claude-haiku-4-5-20251001-v1:0
+  model_slug:
+    description: >-
+      Short name of the model used in service names, e.g. haiku_4_5, sonnet_5_5, opus_5_5
+      (what `ugbench --model <id> targets` prints as the slug)
+    default: haiku_4_5
   service_prefix:
     description: Model services are <service_prefix>_{baseline,inference_table,rate_limits,all_features}
-    default: ugbench_dab
+    default: ugbench_${var.model_slug}
   provider_service:
     description: Model provider service name. After a destroy, use a NEW name (old one stays cached for a while)
-    default: ugbench_dab_bedrock
+    default: ugbench_${var.model_slug}_bedrock
   inference_table_prefix:
     description: Inference tables are <prefix>_<variant>_payload. Immutable once created
-    default: ugbench_dab
+    default: ugbench_${var.model_slug}
   rate_limit_rpm:
     description: Rate limit set far above the test rate, so it is evaluated on every request but never trips
     default: 100000
   bedrock_service_credential:
-    description: "[target dev] UC service credential (IAM role) authorizing Bedrock"
+    description: "[service-credential targets] UC service credential (IAM role) authorizing Bedrock"
     default: ""
   provider_ref:
     description: >-
-      Internal. Provider name used by the model services. Target dev points it at the bundle's own provider
-      resource, which also makes the bundle create the provider before the model services.
+      Internal. Provider name used by the model services. Service-credential targets point it at the bundle's
+      own provider resource, which also makes the bundle create the provider before the model services.
     default: ${var.provider_service}
 
+# Provider service for Option A (UC service credential), shared by every service-credential target.
+x-sc-provider: &sc_provider
+  model_provider_services:
+    bedrock:
+      parent: schemas/${var.catalog}.${var.schema}
+      model_provider_service_id: ${var.provider_service}
+      comment: "ugbench: Amazon Bedrock provider for the latency benchmark"
+      config:
+        provider_type: EXTERNAL_MODEL_PROVIDER_TYPE_AMAZON_BEDROCK
+        amazon_bedrock:
+          direct:
+            region: ${var.aws_region}
+            service_credential:
+              name: credentials/${var.bedrock_service_credential}
+        targets:
+          - model: ${var.bedrock_model_id}
+            native_api_types: ["anthropic/v1/messages"]
+
 targets:
-  # Option A: IAM role registered as a UC service credential (recommended).
+  # Option A: IAM role registered as a UC service credential (recommended). Default model: Haiku 4.5.
   dev:
     default: true
     variables:
@@ -62,28 +88,47 @@ targets:
       schema: CHANGE_ME           # <- your schema
       bedrock_service_credential: CHANGE_ME          # <- your UC service credential name
       provider_ref: ${resources.model_provider_services.bedrock.model_provider_service_id}
-    resources:
-      model_provider_services:
-        bedrock:
-          parent: schemas/${var.catalog}.${var.schema}
-          model_provider_service_id: ${var.provider_service}
-          comment: "ugbench: Amazon Bedrock provider for the latency benchmark"
-          config:
-            provider_type: EXTERNAL_MODEL_PROVIDER_TYPE_AMAZON_BEDROCK
-            amazon_bedrock:
-              direct:
-                region: ${var.aws_region}
-                service_credential:
-                  name: credentials/${var.bedrock_service_credential}
-            targets:
-              - model: ${var.bedrock_model_id}
-                native_api_types: ["anthropic/v1/messages"]
+    resources: *sc_provider
 
   # Option B: IAM user access key stored as UC secrets (`ugbench store-aws-secrets`). Bundles can't express a
   # UC secret *reference* on a provider service yet (the field is dropped), so in this mode the provider service
-  # is created once with `ugbench setup --provider-only` (same name as var.provider_service) and the bundle
-  # deploys the four model services and the job on top of it.
+  # is created once with `ugbench --model <id> setup --provider-only` and the bundle deploys the four model
+  # services and the job on top of it.
+  # (Explicit names: this set was deployed before names were derived from the model.)
   dev_uc_secrets:
     variables:
       catalog: CHANGE_ME          # <- your catalog
       schema: CHANGE_ME           # <- your schema
+      service_prefix: ugbench_dab
+      provider_service: ugbench_dab_bedrock
+      inference_table_prefix: ugbench_dab
+
+  dev_uc_secrets_sonnet55:
+    variables:
+      catalog: CHANGE_ME
+      schema: CHANGE_ME
+      bedrock_model_id: us.anthropic.claude-sonnet-5-5
+      model_slug: sonnet_5_5
+      service_prefix: ugbench_s55              # explicit names: deployed before names were derived
+      provider_service: ugbench_s55_bedrock
+      inference_table_prefix: ugbench_s55
+
+  # ---- Template: add a model ---------------------------------------------------------------------------
+  # Copy, rename, and set the model. Names (ugbench_<model_slug>_*) follow automatically.
+  #
+  #   opus_5_5:                                   # Option B (UC secrets): no `resources` line, and first run
+  #     variables:                                #   ugbench --model us.anthropic.claude-opus-5-5 setup --provider-only
+  #       catalog: CHANGE_ME
+  #       schema: CHANGE_ME
+  #       bedrock_model_id: us.anthropic.claude-opus-5-5
+  #       model_slug: opus_5_5
+  #
+  #   opus_5_5_sc:                                # Option A (service credential): the bundle creates the provider
+  #     variables:
+  #       catalog: CHANGE_ME
+  #       schema: CHANGE_ME
+  #       bedrock_model_id: us.anthropic.claude-opus-5-5
+  #       model_slug: opus_5_5
+  #       bedrock_service_credential: CHANGE_ME
+  #       provider_ref: ${resources.model_provider_services.bedrock.model_provider_service_id}
+  #     resources: *sc_provider

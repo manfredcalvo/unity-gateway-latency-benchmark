@@ -33,7 +33,7 @@ workload:
   # Add a second run with realistic max_tokens (e.g. 300) to show overhead relative to real calls.
   prompt: "Reply with exactly one word: OK"
   max_tokens: 5
-  temperature: 0
+  temperature: 0       # not sent to models that reject it; thinking/effort are set per model (ugbench/models.py)
   stream: false
 
 run:
@@ -51,9 +51,11 @@ unity_gateway:
   enabled: true
   catalog: <catalog>                 # needs CREATE SERVICE (+ CREATE TABLE for inference tables)
   schema: <schema>
-  provider_service: ugbench_bedrock   # if you ever re-create it, pick a NEW name (see README troubleshooting)
+  # {model_slug} comes from aws.bedrock_model_id (e.g. sonnet_5_5), so every model gets its own services and
+  # `ugbench --model <bedrock id> ...` switches all of them. Must match the bundle variables (README 3.3).
+  provider_service: ugbench_{model_slug}_bedrock   # re-creating it? pick a NEW name (README troubleshooting)
   inference_table_prefix: null       # defaults to service_prefix; change it when re-creating model services
-  service_prefix: ugbench
+  service_prefix: ugbench_{model_slug}
   bedrock_auth:
     # Pick ONE: a UC service credential (IAM role, best) or the UC secrets in aws_uc_secrets.
     service_credential: <uc-service-credential-name>
