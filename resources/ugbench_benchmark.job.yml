@@ -1,0 +1,44 @@
+resources:
+  jobs:
+    ugbench_benchmark:
+      name: ugbench-benchmark
+      description: >
+        Unity Gateway latency benchmark: Bedrock direct vs. through Databricks (see README.md).
+        Job parameters map 1:1 to the notebook widgets.
+      max_concurrent_runs: 1     # two benchmarks would compete for the same Bedrock quota
+      timeout_seconds: 7200
+
+      parameters:
+        - {name: config, default: config.yaml}
+        - {name: aws_creds, default: uc_secrets}            # uc_secrets | service_credential | secret_scope
+        - {name: bedrock_service_credential, default: ""}   # for aws_creds=service_credential
+        - {name: aws_secret_scope, default: ""}             # for aws_creds=secret_scope
+        - {name: setup, default: "no"}                      # keep no: the bundle manages the services
+        - {name: health_n, default: "10"}                   # health-gate requests per path
+        - {name: layer, default: raw}                       # raw | strands | both
+        - {name: workload, default: tiny}                   # tiny | large_prompt | realistic
+        - {name: procs, default: "1"}                       # client processes (int or auto)
+        - {name: qps, default: "150"}                       # 0 = closed loop (uses rounds)
+        - {name: duration_s, default: "1200"}
+        - {name: arrival, default: poisson}                 # poisson | uniform
+        - {name: rounds, default: "1000"}                   # only when qps=0 and duration_s is empty
+        - {name: run_id, default: ""}                       # empty = auto-generated
+        - {name: results_volume, default: ""}               # optional /Volumes/<cat>/<schema>/<vol>
+        # What to benchmark: the services this bundle deploys (databricks.yml variables)
+        - {name: ug_catalog, default: "${var.catalog}"}
+        - {name: ug_schema, default: "${var.schema}"}
+        - {name: ug_service_prefix, default: "${var.service_prefix}"}
+        - {name: ug_provider_service, default: "${var.provider_service}"}
+        - {name: aws_region, default: "${var.aws_region}"}
+        - {name: bedrock_model_id, default: "${var.bedrock_model_id}"}
+
+      environments:
+        - environment_key: env4
+          spec:
+            environment_version: "4"   # needed for dbutils.secrets.get(catalog=..., schema=...)
+
+      tasks:
+        - task_key: bench
+          environment_key: env4
+          notebook_task:
+            notebook_path: ../notebooks/run_benchmark.py

@@ -1,0 +1,58 @@
+# The four Unity Gateway model services under test. All route to the same Bedrock provider service
+# (defined per target in databricks.yml, because only its auth differs); they differ only in features.
+x-route: &route
+  routing:
+    destinations:
+      - name: bedrock
+        destination_type: DESTINATION_TYPE_EXTERNAL_FOUNDATION_MODEL
+        external_model_config:
+          # Referencing the provider resource makes the bundle create it first.
+          model_provider_service: model-provider-services/${var.catalog}.${var.schema}.${var.provider_ref}
+          target:
+            model: ${var.bedrock_model_id}
+
+x-limits: &limits
+  - key: RATE_LIMIT_KEY_SERVICE
+    renewal_period: RATE_LIMIT_RENEWAL_PERIOD_MINUTE
+    requests: ${var.rate_limit_rpm}
+  - key: RATE_LIMIT_KEY_USER_DEFAULT
+    renewal_period: RATE_LIMIT_RENEWAL_PERIOD_MINUTE
+    requests: ${var.rate_limit_rpm}
+
+resources:
+  model_services:
+    baseline:
+      parent: schemas/${var.catalog}.${var.schema}
+      model_service_id: ${var.service_prefix}_baseline
+      comment: "ugbench variant 'baseline': no features"
+      config:
+        <<: *route
+
+    inference_table:
+      parent: schemas/${var.catalog}.${var.schema}
+      model_service_id: ${var.service_prefix}_inference_table
+      comment: "ugbench variant 'inference_table': inference_table"
+      config:
+        <<: *route
+        inference_table:
+          parent: schemas/${var.catalog}.${var.schema}
+          table_name_prefix: ${var.inference_table_prefix}_inference_table
+
+    rate_limits:
+      parent: schemas/${var.catalog}.${var.schema}
+      model_service_id: ${var.service_prefix}_rate_limits
+      comment: "ugbench variant 'rate_limits': rate_limits"
+      config:
+        <<: *route
+        rate_limits: *limits
+
+    all_features:
+      parent: schemas/${var.catalog}.${var.schema}
+      model_service_id: ${var.service_prefix}_all_features
+      comment: "ugbench variant 'all_features': inference_table, rate_limits"
+      config:
+        <<: *route
+        inference_table:
+          parent: schemas/${var.catalog}.${var.schema}
+          table_name_prefix: ${var.inference_table_prefix}_all_features
+        rate_limits: *limits

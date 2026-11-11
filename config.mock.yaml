@@ -1,0 +1,15 @@
+# Offline demo / pipeline test: no AWS or Databricks calls. Synthetic latencies only.
+#   ugbench -c config.mock.yaml run
+run_name: mock-demo
+aws: {bedrock_model_id: null}
+unity_gateway: {enabled: false}
+serving_endpoints: {enabled: false}
+run: {rounds: 1500, warmup_rounds: 10, output_dir: results}
+mock:
+  enabled: true
+  targets:
+    bedrock_direct:     {group: direct, base_ms: 450, sigma: 0.2, call_sigma: 0.12, overhead_ms: 0}
+    mock:baseline:      {group: mock, base_ms: 450, sigma: 0.2, call_sigma: 0.12, overhead_ms: 4, overhead_jitter_ms: 1.5}
+    mock:usage_tracking: {group: mock, features: [usage_tracking], base_ms: 450, sigma: 0.2, call_sigma: 0.12, overhead_ms: 7, overhead_jitter_ms: 2.5}
+    mock:inference_tables: {group: mock, features: [inference_tables], base_ms: 450, sigma: 0.2, call_sigma: 0.12, overhead_ms: 7, overhead_jitter_ms: 2.5}
+    mock:rate_limits:   {group: mock, features: [rate_limits], base_ms: 450, sigma: 0.2, call_sigma: 0.12, overhead_ms: 6, overhead_jitter_ms: 1}

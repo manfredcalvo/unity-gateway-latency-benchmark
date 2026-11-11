@@ -1,0 +1,96 @@
+# ugbench configuration. Copy to config.yaml and fill in the <...> values.
+# Every key not set here falls back to the defaults in ugbench/config.py.
+
+run_name: acme-claude-haiku          # becomes part of the run id / results folder
+layer: raw                           # raw (boto3 + HTTP) | strands (experimental: Strands + Anthropic SDK)
+
+databricks:
+  profile: <databricks-cli-profile>  # from ~/.databrickscfg. Leave null inside a Databricks notebook.
+
+aws:
+  region: us-east-1                  # use the SAME region as the Databricks workspace
+  profile: null                      # boto3 profile for direct Bedrock calls (null = default chain)
+  # Bedrock model or inference-profile ID. Use the same model for both paths.
+  bedrock_model_id: us.anthropic.claude-haiku-4-5-20251001-v1:0
+  # Inside Databricks only: get boto3 creds from a UC service credential instead of a profile.
+  service_credential: null
+  # Read the AWS key pair from the UC secrets below. Recommended for notebook/job runs; the notebook
+  # turns this on automatically when running inside Databricks.
+  use_uc_secrets: false
+
+# One AWS key pair stored ONCE as Unity Catalog secrets (create with `ugbench store-aws-secrets`).
+# The provider service references the secret access key by name; the benchmark notebook reads both.
+aws_uc_secrets:
+  catalog: <catalog>
+  schema: <schema>
+  access_key_id: ugbench_aws_access_key_id
+  secret_access_key: ugbench_aws_secret_access_key
+
+workload:
+  # Presets (override with `--workload`): tiny (5-token reply), large_prompt (~566 input tokens, 5-token
+  # reply), realistic (300-token reply). Small outputs make the gateway overhead as visible as possible.
+  profile: tiny
+  # Add a second run with realistic max_tokens (e.g. 300) to show overhead relative to real calls.
+  prompt: "Reply with exactly one word: OK"
+  max_tokens: 5
+  temperature: 0
+  stream: false
+
+run:
+  rounds: 1000                       # >= 2000 recommended for a stable P99
+  warmup_rounds: 20
+  concurrency: 1                     # latency test. Raise (e.g. 8-16) for an under-load test.
+  pause_between_requests_ms: 0
+  timeout_s: 60
+  output_dir: results
+
+# ---------------------------------------------------------------------------------------
+# Unity Gateway (UC model provider service + model services). Recommended path.
+# ---------------------------------------------------------------------------------------
+unity_gateway:
+  enabled: true
+  catalog: <catalog>                 # needs CREATE SERVICE (+ CREATE TABLE for inference tables)
+  schema: <schema>
+  provider_service: ugbench_bedrock   # if you ever re-create it, pick a NEW name (see README troubleshooting)
+  inference_table_prefix: null       # defaults to service_prefix; change it when re-creating model services
+  service_prefix: ugbench
+  bedrock_auth:
+    # Pick ONE: a UC service credential (IAM role, best) or the UC secrets in aws_uc_secrets.
+    service_credential: <uc-service-credential-name>
+    use_uc_secrets: false
+    # Or access keys from env vars UGBENCH_AWS_ACCESS_KEY_ID / UGBENCH_AWS_SECRET_ACCESS_KEY,
+    # optionally with the secret stored as a UC secret:
+    # secret_access_key_uc_secret: secrets/<catalog>.<schema>.<secret>
+  model: null                        # provider-side model id; defaults to aws.bedrock_model_id
+  native_api_types: ["anthropic/v1/messages"]
+  api: anthropic_messages            # anthropic_messages (native, what the Anthropic SDK uses) | chat_completions
+  include_provider_service_direct: true
+  rate_limit:
+    requests_per_minute: 100000      # far above benchmark rate: evaluated on every request, never trips
+  variants:
+    baseline: {}
+    inference_table: {inference_table: true}
+    rate_limits: {rate_limits: true}
+    all_features: {inference_table: true, rate_limits: true}
+
+# ---------------------------------------------------------------------------------------
+# Legacy serving endpoints (external model + endpoint AI Gateway). Enable to reproduce the
+# per-feature breakdown, including usage tracking on/off as a separate toggle.
+# ---------------------------------------------------------------------------------------
+serving_endpoints:
+  enabled: false
+  endpoint_prefix: ugbench
+  bedrock_provider: anthropic
+  auth:
+    uc_service_credential_name: <uc-service-credential-name>
+    # instance_profile_arn: arn:aws:iam::<acct>:instance-profile/<name>
+    # aws_access_key_id_secret: "{{secrets/<scope>/<key>}}"
+    # aws_secret_access_key_secret: "{{secrets/<scope>/<key>}}"
+  inference_table: {catalog: <catalog>, schema: <schema>}
+  rate_limit: {calls_per_minute: 100000}
+  variants:
+    baseline: {}
+    usage_tracking: {usage_tracking: true}
+    inference_tables: {inference_tables: true}
+    rate_limits: {rate_limits: true}
+    all_features: {usage_tracking: true, inference_tables: true, rate_limits: true}

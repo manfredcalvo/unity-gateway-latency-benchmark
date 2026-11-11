@@ -1,0 +1,89 @@
+# Declarative Automation Bundle: the Unity Gateway test services + the benchmark job.
+#
+#   databricks bundle deploy -p <profile> [-t dev_uc_secrets]     # services + job (wait 5-30 min before benchmarking)
+#   databricks bundle run ugbench_benchmark -p <profile> --params qps=150,duration_s=1200
+#   databricks bundle destroy -p <profile> [-t dev_uc_secrets]    # services + job (inference tables are kept)
+#
+# Site-specific values live in the target's `variables` below (or pass --var name=value / BUNDLE_VAR_<name>).
+# No workspace profile is hardcoded: pass -p <profile>.
+bundle:
+  name: ugbench
+
+include:
+  - resources/*.yml
+
+sync:
+  include:
+    - config.yaml          # gitignored (site-specific), but the notebook reads it
+  exclude:
+    - .venv/**
+    - results/**           # never touched by deploys, so earlier run folders are preserved
+    - tests/**
+    - "**/__pycache__/**"
+
+variables:
+  catalog:
+    description: Catalog for the services and inference tables (needs USE CATALOG)
+  schema:
+    description: Schema for the services and inference tables (needs USE SCHEMA, CREATE SERVICE, CREATE TABLE)
+  aws_region:
+    description: Bedrock region; must be the workspace's region
+    default: us-east-1
+  bedrock_model_id:
+    description: Bedrock model / inference-profile ID used on every path
+    default: us.anthropic.claude-haiku-4-5-20251001-v1:0
+  service_prefix:
+    description: Model services are <service_prefix>_{baseline,inference_table,rate_limits,all_features}
+    default: ugbench_dab
+  provider_service:
+    description: Model provider service name. After a destroy, use a NEW name (old one stays cached for a while)
+    default: ugbench_dab_bedrock
+  inference_table_prefix:
+    description: Inference tables are <prefix>_<variant>_payload. Immutable once created
+    default: ugbench_dab
+  rate_limit_rpm:
+    description: Rate limit set far above the test rate, so it is evaluated on every request but never trips
+    default: 100000
+  bedrock_service_credential:
+    description: "[target dev] UC service credential (IAM role) authorizing Bedrock"
+    default: ""
+  provider_ref:
+    description: >-
+      Internal. Provider name used by the model services. Target dev points it at the bundle's own provider
+      resource, which also makes the bundle create the provider before the model services.
+    default: ${var.provider_service}
+
+targets:
+  # Option A: IAM role registered as a UC service credential (recommended).
+  dev:
+    default: true
+    variables:
+      catalog: CHANGE_ME          # <- your catalog
+      schema: CHANGE_ME           # <- your schema
+      bedrock_service_credential: CHANGE_ME          # <- your UC service credential name
+      provider_ref: ${resources.model_provider_services.bedrock.model_provider_service_id}
+    resources:
+      model_provider_services:
+        bedrock:
+          parent: schemas/${var.catalog}.${var.schema}
+          model_provider_service_id: ${var.provider_service}
+          comment: "ugbench: Amazon Bedrock provider for the latency benchmark"
+          config:
+            provider_type: EXTERNAL_MODEL_PROVIDER_TYPE_AMAZON_BEDROCK
+            amazon_bedrock:
+              direct:
+                region: ${var.aws_region}
+                service_credential:
+                  name: credentials/${var.bedrock_service_credential}
+            targets:
+              - model: ${var.bedrock_model_id}
+                native_api_types: ["anthropic/v1/messages"]
+
+  # Option B: IAM user access key stored as UC secrets (`ugbench store-aws-secrets`). Bundles can't express a
+  # UC secret *reference* on a provider service yet (the field is dropped), so in this mode the provider service
+  # is created once with `ugbench setup --provider-only` (same name as var.provider_service) and the bundle
+  # deploys the four model services and the job on top of it.
+  dev_uc_secrets:
+    variables:
+      catalog: CHANGE_ME          # <- your catalog
+      schema: CHANGE_ME           # <- your schema
