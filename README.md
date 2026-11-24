@@ -13,6 +13,10 @@ model-specific request fields follow from it ([3.3](#33-choose-the-model)).
 This README is a replication guide: follow §2–3 to run it in your environment, §4 to read the report, and compare
 your numbers with the **[reference results](#6-reference-results-what-you-should-expect)** we measured (§6).
 
+<p align="center"><img src="docs/architecture.svg" alt="Architecture: the same request on seven paths: Bedrock direct, five Unity Gateway paths to your Bedrock, and the system.ai.claude model service to the Databricks-hosted model" width="100%"></p>
+
+<details><summary>Text version</summary>
+
 ```
                        ┌──────────────── bedrock_direct (boto3 Converse) ────────────────┐
   client  ─────────────┤                                                                  ├──►  Amazon Bedrock
@@ -26,6 +30,9 @@ your numbers with the **[reference results](#6-reference-results-what-you-should
                             └─ dbx_hosted:ug       system.ai.claude-<x> model service ──► the same model
                                                    hosted by Databricks (pay-per-token), not your Bedrock
 ```
+
+</details>
+
 `dbx_hosted:ug` answers a different question from the others: with the gateway held constant, how does the
 **Databricks-hosted** copy of the model compare with the model in **your own** Bedrock account?
 
@@ -537,7 +544,8 @@ databricks bundle run ugbench_benchmark -p <profile> -t <target> --params worklo
 | `health` shows `404 … Connection '<name>_do_not_modify' does not exist` | The provider service was deleted and **re-created under the same name**; some gateway instances still point at the old one. Use a **new** `provider_service` name and re-run `setup`. That re-points the model services in place. Keep the old one until `health` is clean, then delete it. |
 | `403 PERMISSION_DENIED … The model provider denied` on every gateway path, for a new model | The IAM policy doesn't allow that model yet (3.2). After updating it, IAM takes a few minutes to propagate; re-run `health`. |
 | `400 … temperature is deprecated` / thinking errors for a new model | Its request rules aren't what `ugbench/models.py` assumes. Set `workload.thinking` / `workload.effort` (or `temperature: null`) in `config.yaml`. |
-| `403 signature does not match` / `security token invalid` after a key rotation | Propagation: some instances still hold the old key. Keep the **old IAM key active** until `health` is clean everywhere. |
+| `403 signature does not match` / `security token invalid` after a key rotation | Propagation: some instances still hold the old key. Keep the **old IAM key active** until `health` is clean everywhere. If it doesn't clear, see the next row. |
+| `403 security token invalid` on every gateway path after a **new** key was stored with `store-aws-secrets` (e.g. the old key or IAM user was deleted), while `bedrock_direct` works | The provider service keeps using the old key until its auth is saved again; waiting doesn't fix it (we waited 15 min). Re-save it for each model: `ugbench [--model <id>] setup --update-auth --provider-only`. `health` was clean ~4 min later. |
 | `Cannot change the UC Secret reference on an existing model provider service` | Switching auth mode needs a new provider service (see the first row). |
 | Notebook: `dbutils.secrets.get() got an unexpected keyword argument 'catalog'` | The job isn't on **serverless environment version 4+**. Deploy the job with the bundle (3.5), which sets it. |
 | Notebook: `Unknown service: 'bedrock-runtime'` | Old boto3 in the image. The notebook's `%pip install --upgrade` line fixes it; keep it. |

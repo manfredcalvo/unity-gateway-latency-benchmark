@@ -1,0 +1,178 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" width="1200" height="800" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>ugbench architecture: the same request on seven paths</title>
+  <desc>A client in the same AWS region sends the same Claude request to Amazon Bedrock directly, through Unity Gateway model services to your Bedrock, and through the system-provided system.ai.claude model service to the Databricks-hosted model.</desc>
+  <style>
+    .bg { fill: #ffffff; }
+    .panel { fill: #f6f8fa; stroke: #d0d7de; }
+    .card { fill: #ffffff; stroke: #d0d7de; }
+    .t1 { fill: #1f2328; font-size: 26px; font-weight: 700; }
+    .t2 { fill: #1f2328; font-size: 15px; font-weight: 650; }
+    .t3 { fill: #1f2328; font-size: 13px; font-weight: 600; }
+    .tx { fill: #424a53; font-size: 12px; }
+    .mu { fill: #59636e; font-size: 11.5px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .tag { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; }
+    .flow { fill: none; stroke-width: 2.2; stroke-linecap: round; }
+    .anim { stroke-dasharray: 7 7; animation: dash 1.6s linear infinite; }
+    @keyframes dash { to { stroke-dashoffset: -28; } }
+    @media (prefers-reduced-motion: reduce) { .anim { animation: none; } }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0d1117; }
+      .panel { fill: #161b22; stroke: #30363d; }
+      .card { fill: #0d1117; stroke: #30363d; }
+      .t1, .t2, .t3 { fill: #e6edf3; }
+      .tx { fill: #c9d1d9; }
+      .mu { fill: #8b949e; }
+    }
+  </style>
+  <defs>
+    <marker id="aD" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#e8833a"/></marker>
+    <marker id="aG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fde"/></marker>
+    <marker id="aH" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d6453d"/></marker>
+    <marker id="aN" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8c959f"/></marker>
+  </defs>
+
+  <rect class="bg" width="1200" height="800" rx="18"/>
+
+  <!-- Title -->
+  <text class="t1" x="40" y="50">Same request, seven paths</text>
+  <text class="tx" x="40" y="74" style="font-size:14px">Every path gets the identical Claude request at the same time, so the difference between paths is what each hop adds.</text>
+
+  <!-- ===== Client ===== -->
+  <rect class="panel" x="40" y="250" width="220" height="230" rx="14"/>
+  <text class="tag" x="58" y="276" fill="#8c959f">CLIENT</text>
+  <text class="t2" x="58" y="300">ugbench runner</text>
+  <text class="tx" x="58" y="320">Databricks serverless job</text>
+  <text class="tx" x="58" y="336">in the same AWS region</text>
+  <text class="mu" x="58" y="352">(or your laptop, for a demo)</text>
+  <line x1="58" y1="368" x2="242" y2="368" stroke="#d0d7de"/>
+  <text class="tx" x="58" y="390">• Open-loop Poisson arrivals</text>
+  <text class="tx" x="58" y="410">• Shuffled, interleaved rounds</text>
+  <text class="tx" x="58" y="430">• Same prompt + fields on all</text>
+  <text class="tx" x="58" y="450">• Every request kept (raw.csv)</text>
+
+  <!-- ===== Your AWS account ===== -->
+  <rect class="panel" x="930" y="110" width="230" height="250" rx="14" stroke="#e8833a" stroke-width="1.5"/>
+  <text class="tag" x="948" y="136" fill="#e8833a">YOUR AWS ACCOUNT</text>
+  <rect class="card" x="948" y="150" width="194" height="120" rx="10"/>
+  <text class="t2" x="964" y="176">Amazon Bedrock</text>
+  <text class="tx" x="964" y="198">Claude Haiku · Sonnet · Opus</text>
+  <text class="mu mono" x="964" y="218">us.anthropic.claude-*</text>
+  <text class="mu" x="964" y="236">cross-region inference</text>
+  <text class="mu" x="964" y="254">profile · us-east-1</text>
+  <text class="tx" x="948" y="296">Your IAM · your quota ·</text>
+  <text class="tx" x="948" y="314">your model invocations</text>
+  <text class="mu" x="948" y="338">Bedrock bills you directly</text>
+
+  <!-- ===== Databricks-hosted ===== -->
+  <rect class="panel" x="930" y="500" width="230" height="130" rx="14" stroke="#d6453d" stroke-width="1.5"/>
+  <text class="tag" x="948" y="526" fill="#d6453d">DATABRICKS-HOSTED</text>
+  <text class="t2" x="948" y="552">Claude, pay-per-token</text>
+  <text class="tx" x="948" y="572">Foundation Model API</text>
+  <text class="mu" x="948" y="592">Not your AWS account and</text>
+  <text class="mu" x="948" y="610">not your Bedrock quota</text>
+
+  <!-- ===== Unity Gateway ===== -->
+  <rect class="panel" x="300" y="160" width="590" height="480" rx="16" stroke="#2f6fde" stroke-width="1.5"/>
+  <text class="tag" x="320" y="186" fill="#2f6fde">DATABRICKS WORKSPACE · UNITY GATEWAY</text>
+
+  <rect x="320" y="200" width="550" height="38" rx="19" fill="#2f6fde"/>
+  <text x="595" y="224" text-anchor="middle" fill="#ffffff" font-size="13.5" font-weight="650" class="mono">POST /ai-gateway/anthropic/v1/messages</text>
+
+  <!-- bus from endpoint to services -->
+  <path d="M 336 238 L 336 594" stroke="#8c959f" stroke-width="2" fill="none"/>
+
+  <!-- model service cards -->
+  <g>
+    <rect class="card" x="350" y="258" width="250" height="44" rx="9"/>
+    <rect x="350" y="258" width="5" height="44" rx="2" fill="#2f6fde"/>
+    <text class="t3 mono" x="366" y="277">ug:baseline</text>
+    <text class="mu" x="366" y="293">model service, no optional features</text>
+    <path d="M 336 280 L 349 280" stroke="#8c959f" stroke-width="2"/>
+
+    <rect class="card" x="350" y="312" width="250" height="44" rx="9"/>
+    <rect x="350" y="312" width="5" height="44" rx="2" fill="#2f6fde"/>
+    <text class="t3 mono" x="366" y="331">ug:inference_table</text>
+    <text class="mu" x="366" y="347">+ request/response logging to UC</text>
+    <path d="M 336 334 L 349 334" stroke="#8c959f" stroke-width="2"/>
+
+    <rect class="card" x="350" y="366" width="250" height="44" rx="9"/>
+    <rect x="350" y="366" width="5" height="44" rx="2" fill="#2f6fde"/>
+    <text class="t3 mono" x="366" y="385">ug:rate_limits</text>
+    <text class="mu" x="366" y="401">+ rate limits (evaluated, never hit)</text>
+    <path d="M 336 388 L 349 388" stroke="#8c959f" stroke-width="2"/>
+
+    <rect class="card" x="350" y="420" width="250" height="44" rx="9"/>
+    <rect x="350" y="420" width="5" height="44" rx="2" fill="#2f6fde"/>
+    <text class="t3 mono" x="366" y="439">ug:all_features</text>
+    <text class="mu" x="366" y="455">+ inference table + rate limits</text>
+    <path d="M 336 442 L 349 442" stroke="#8c959f" stroke-width="2"/>
+
+    <rect class="card" x="350" y="474" width="250" height="44" rx="9" stroke-dasharray="4 3"/>
+    <rect x="350" y="474" width="5" height="44" rx="2" fill="#2f6fde"/>
+    <text class="t3 mono" x="366" y="493">ug_provider:direct</text>
+    <text class="mu" x="366" y="509">provider service only, no model service</text>
+    <path d="M 336 496 L 349 496" stroke="#8c959f" stroke-width="2"/>
+
+    <rect class="card" x="350" y="562" width="250" height="56" rx="9"/>
+    <rect x="350" y="562" width="5" height="56" rx="2" fill="#d6453d"/>
+    <text class="t3 mono" x="366" y="582">dbx_hosted:ug</text>
+    <text class="mu mono" x="366" y="598">system.ai.claude-&lt;x&gt;</text>
+    <text class="mu" x="366" y="612">system-provided model service, no features</text>
+    <path d="M 336 590 L 349 590" stroke="#8c959f" stroke-width="2"/>
+  </g>
+
+  <!-- provider service -->
+  <rect class="card" x="650" y="300" width="210" height="150" rx="12" stroke="#2f6fde" stroke-width="1.5"/>
+  <text class="t2" x="668" y="328">Model provider service</text>
+  <text class="tx" x="668" y="350">Amazon Bedrock connection</text>
+  <line x1="668" y1="364" x2="842" y2="364" stroke="#d0d7de"/>
+  <text class="mu" x="668" y="384">AWS credentials, by reference:</text>
+  <text class="mu" x="668" y="402">• UC secrets (IAM user key), or</text>
+  <text class="mu" x="668" y="420">• UC service credential (IAM role)</text>
+  <text class="mu" x="668" y="438">never copied into the config</text>
+
+  <!-- ===== Flows ===== -->
+  <!-- bedrock_direct -->
+  <path class="flow anim" d="M 200 250 C 200 70, 800 70, 926 150" stroke="#e8833a" marker-end="url(#aD)"/>
+  <rect x="382" y="90" width="268" height="24" rx="12" fill="#e8833a"/>
+  <text x="516" y="107" text-anchor="middle" fill="#ffffff" font-size="12.5" font-weight="650">bedrock_direct · boto3 Converse</text>
+
+  <!-- client to gateway -->
+  <path class="flow anim" d="M 260 330 C 290 330, 286 219, 318 219" stroke="#8c959f" marker-end="url(#aN)"/>
+
+  <!-- services to provider -->
+  <path class="flow" d="M 600 280 C 628 280, 622 340, 648 340" stroke="#2f6fde"/>
+  <path class="flow" d="M 600 334 C 624 334, 626 356, 648 356" stroke="#2f6fde"/>
+  <path class="flow" d="M 600 388 C 624 388, 626 372, 648 372" stroke="#2f6fde"/>
+  <path class="flow" d="M 600 442 C 624 442, 626 392, 648 392" stroke="#2f6fde"/>
+  <path class="flow" d="M 600 496 C 628 496, 622 412, 648 412" stroke="#2f6fde" stroke-dasharray="4 4" marker-end="url(#aG)"/>
+
+  <!-- provider to Bedrock -->
+  <path class="flow anim" d="M 860 360 C 896 360, 896 232, 928 232" stroke="#2f6fde" marker-end="url(#aG)"/>
+
+  <!-- hosted -->
+  <path class="flow anim" d="M 600 590 C 760 590, 780 565, 928 565" stroke="#d6453d" marker-end="url(#aH)"/>
+  <text class="mu" x="770" y="606" text-anchor="middle">pay-per-token destination</text>
+
+  <!-- ===== What each comparison answers ===== -->
+  <rect class="panel" x="40" y="664" width="1120" height="112" rx="14"/>
+  <text class="tag" x="60" y="690" fill="#8c959f">WHAT EACH COMPARISON ANSWERS (PAIRED MEDIAN, 95% CI)</text>
+
+  <circle cx="68" cy="716" r="6" fill="#2f6fde"/>
+  <text class="t3" x="82" y="721">Gateway overhead</text>
+  <text class="mu mono" x="82" y="740">ug:baseline − bedrock_direct</text>
+  <text class="mu" x="82" y="758">What routing your Bedrock through UG adds</text>
+
+  <circle cx="438" cy="716" r="6" fill="#2f6fde" fill-opacity=".45" stroke="#2f6fde"/>
+  <text class="t3" x="452" y="721">Feature cost</text>
+  <text class="mu mono" x="452" y="740">ug:&lt;feature&gt; − ug:baseline</text>
+  <text class="mu" x="452" y="758">Inference tables, rate limits, both</text>
+
+  <circle cx="808" cy="716" r="6" fill="#d6453d"/>
+  <text class="t3" x="822" y="721">Hosted vs. your Bedrock</text>
+  <text class="mu mono" x="822" y="740">dbx_hosted:ug − bedrock_direct</text>
+  <text class="mu" x="822" y="758">Same gateway, different model backend</text>
+
+  <text class="mu" x="1160" y="792" text-anchor="end">Server-side cross-check: system.ai_gateway.usage (gateway time vs. upstream time, per request)</text>
+</svg>
