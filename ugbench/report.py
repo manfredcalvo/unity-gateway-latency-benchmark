@@ -37,7 +37,7 @@ LABELS = {
     "ug:inference_table": "Unity Gateway: + inference table",
     "ug:rate_limits": "Unity Gateway: + rate limits",
     "ug:all_features": "Unity Gateway: + inference table + rate limits",
-    "dbx_hosted:ug": "Unity Gateway: Databricks-hosted model",
+    "dbx_hosted:ug": "Unity Gateway: Databricks-hosted model (system.ai model service)",
     "se:baseline": "Serving endpoint: no features",
     "se:usage_tracking": "Serving endpoint: + usage tracking",
     "se:inference_tables": "Serving endpoint: + inference tables",

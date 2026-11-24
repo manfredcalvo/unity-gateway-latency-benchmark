@@ -23,8 +23,8 @@ your numbers with the **[reference results](#6-reference-results-what-you-should
                             ├─ ug:rate_limits      + rate limits (set very high: evaluated, never triggered)
                             ├─ ug:all_features     + both
                             ├─ ug_provider:direct  provider service only (no model service)
-                            └─ dbx_hosted:ug       model service ──► the same model hosted by Databricks
-                                                   (Foundation Model API, pay-per-token), not your Bedrock
+                            └─ dbx_hosted:ug       system.ai.claude-<x> model service ──► the same model
+                                                   hosted by Databricks (pay-per-token), not your Bedrock
 ```
 `dbx_hosted:ug` answers a different question from the others: with the gateway held constant, how does the
 **Databricks-hosted** copy of the model compare with the model in **your own** Bedrock account?
@@ -70,24 +70,31 @@ More detail: [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
 
 | Area | What is needed |
 |---|---|
-| **Databricks** | A workspace with **Unity Gateway** enabled, **in the same AWS region as Bedrock** (e.g. both us-east-1). Databricks CLI ≥ 1.19 with a profile (`databricks auth login`). |
+| **Databricks** | A workspace with **Unity Gateway** enabled, **in the same AWS region as Bedrock** (e.g. both us-east-1), with **serverless jobs** enabled (the job runs on serverless environment version 4). Databricks CLI ≥ 1.19 with a profile (`databricks auth login`). |
 | **Unity Catalog** | A catalog/schema you can use, with `USE CATALOG`, `USE SCHEMA`, `CREATE SERVICE`, `CREATE TABLE` (inference tables), and either `CREATE SECRET` (UC secrets) or `ACCESS` on a service credential. |
-| **Bedrock** | Access to the Anthropic Claude model you want to test, in that region: any model ID or inference profile (we measured `us.anthropic.claude-haiku-4-5-20251001-v1:0` and `us.anthropic.claude-sonnet-5-5`). |
+| **Databricks-hosted path** *(optional, on by default)* | The pay-per-token `system.ai.claude-*` model service for your model (e.g. `system.ai.claude-sonnet-5-5`) must be available in the workspace and you must be able to query it. Its pay-per-token rate limits must allow ~1/7 of the test rate (~21 QPS at 150 QPS; we saw no 429s). To skip this path, set `unity_gateway.databricks_hosted.enabled: false`. |
+| **Bedrock** | Access to the Anthropic Claude model you want to test, in that region: any model ID or inference profile (we measured `us.anthropic.claude-haiku-4-5-20251001-v1:0`, `us.anthropic.claude-sonnet-5-5` and `us.anthropic.claude-opus-5-5`). |
 | **Bedrock quota** | Requests/min and tokens/min **for that model** must cover your test rate, see the table below. Quotas are per model. |
 | **AWS credentials** | **Best:** an IAM role registered as a UC **service credential**. **Alternative:** an IAM user limited to `bedrock:InvokeModel*`, stored once as two UC secrets. Your laptop also needs AWS credentials for the direct path, e.g. `aws sso login`. |
 | **Server-side stats** *(optional)* | A SQL warehouse, and `SELECT` on `system.ai_gateway.usage` (account + metastore admin by default). |
-| **Python** | Python ≥ 3.10 and [`uv`](https://docs.astral.sh/uv/) (or pip). |
+| **Local tools** | `git`, Python ≥ 3.10 and [`uv`](https://docs.astral.sh/uv/) (or pip), the [AWS CLI](https://docs.aws.amazon.com/cli/) v2 (IAM setup, quota checks, `aws sso login`), and `jq` (used in 3.2). |
+| **Budget** | Model tokens are billed on every path. A 30-minute, 150 QPS tiny-reply run is ~270k short requests: roughly $10–20 at list price for Haiku 4.5, Sonnet 5.5 and Opus 5.5 together. The 10-minute throughput run (3.7b) costs far more: ~$5 (Haiku 4.5) to ~$80 (Opus 5.5) per model. |
 
 **Quota sizing** (per model; the same for every Claude model at these sizes). Bedrock's quota is shared by
 everything in the account, so leave headroom. Check yours with
 `aws service-quotas list-service-quotas --service-code bedrock --query "Quotas[?contains(QuotaName,'<model name>')]"`.
+The token figures include Bedrock's [output-token burndown](https://docs.aws.amazon.com/bedrock/latest/userguide/quotas-token-burndown.html):
+recent Claude models count each output token **5×** against tokens/min (a throttling rule, not billing). The
+rates are the total test rate; the Databricks-hosted path doesn't use your Bedrock quota, so the real load is a
+little lower.
 
-| Test | Requests/min | Tokens/min (approx.) |
+| Test | Requests/min | Tokens/min (approx., with 5× output burndown) |
 |---|---|---|
-| 100 QPS, tiny prompt (5-token reply) | 6,000 | ~0.2 M |
-| 100 QPS, large prompt (566 in / 5 out) | 6,000 | ~3.4 M |
-| 150 QPS, tiny prompt | 9,000 | ~0.3 M |
-| 1,000 QPS, tiny prompt | 60,000 | ~2 M → needs a quota increase |
+| 100 QPS, tiny prompt (5-token reply) | 6,000 | ~0.3 M |
+| 100 QPS, large prompt (566 in / 5 out) | 6,000 | ~3.5 M |
+| 150 QPS, tiny prompt | 9,000 | ~0.4 M |
+| 1,000 QPS, tiny prompt | 60,000 | ~2.7 M → needs a quota increase |
+| 14 QPS, throughput (500-token reply, 3.7b) | 840 | ~2.1 M → may need a quota increase |
 
 ---
 
@@ -142,9 +149,11 @@ profile (for example `us.anthropic.claude-haiku-4-5-20251001-v1:0`, `us.anthropi
 `aws bedrock list-inference-profiles --region <region>`. Everything else is derived from that ID:
 
 * **Databricks-hosted copy.** The same model hosted by Databricks is derived too:
-  `us.anthropic.claude-sonnet-5-5` -> `databricks-claude-sonnet-5-5` (UC model `system.ai.databricks-claude-sonnet-5-5`),
-  reached through the model service `ugbench_<slug>_dbx_hosted`. Set `unity_gateway.databricks_hosted.enabled:
-  false` to skip it, or `.model` to name a different endpoint. In the bundle, set `databricks_hosted_model`.
+  `us.anthropic.claude-sonnet-5-5` -> the system-provided model service `system.ai.claude-sonnet-5-5` (no optional
+  features), called through the same `/ai-gateway/anthropic/v1/messages` endpoint. Nothing to create or deploy.
+  Set `unity_gateway.databricks_hosted.enabled: false` to skip it, or `.model` to name a different model
+  (`databricks-claude-<tier>-<version>`). `service: custom` instead creates and calls your own
+  `ugbench_<slug>_dbx_hosted` model service with the same destination (`ugbench setup`).
 * **Service names.** A short *model slug* (`us.anthropic.claude-sonnet-5-5` -> `sonnet_5_5`) names the services:
   model services `ugbench_<slug>_{baseline,inference_table,rate_limits,all_features}`, provider
   `ugbench_<slug>_bedrock`, inference tables `ugbench_<slug>_<variant>_payload`. **Each model gets its own set of
@@ -187,7 +196,6 @@ targets:
       schema: ug_benchmark
       bedrock_model_id: us.anthropic.claude-sonnet-5-5
       model_slug: sonnet_5_5                    # the slug `ugbench --model <id> targets` prints
-      databricks_hosted_model: databricks-claude-sonnet-5-5
 
   sonnet_5_5_sc:                                # Option A (service credential): the bundle also creates the provider
     variables:
@@ -206,7 +214,6 @@ The included `dev` target (Option A, Haiku 4.5) works the same way. All variable
 | `catalog`, `schema` | *(set per target)* | Where the services and inference tables are created |
 | `bedrock_model_id` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | **The model**, on every path |
 | `model_slug` | `haiku_4_5` | Short model name used in the service names |
-| `databricks_hosted_model` | `databricks-claude-haiku-4-5` | Databricks-hosted copy of the model, for `dbx_hosted:ug` |
 | `service_prefix` | `ugbench_${var.model_slug}` | Model services `<prefix>_{baseline,inference_table,rate_limits,all_features}` |
 | `provider_service` | `ugbench_${var.model_slug}_bedrock` | Model provider service |
 | `inference_table_prefix` | `ugbench_${var.model_slug}` | Tables `<prefix>_<variant>_payload` |
@@ -426,7 +433,9 @@ No feature adds measurable latency on any model: every interval includes zero.
 
 ### 6.2 Databricks-hosted model vs. your own Bedrock (same gateway)
 `dbx_hosted:ug` sends the same request through the same gateway to the **Databricks-hosted** copy of the model
-(Foundation Model API, pay-per-token), instead of to the model in your Bedrock account. Same runs as 6.1.
+(pay-per-token), instead of to the model in your Bedrock account. Same runs as 6.1. These runs reached it
+through our own model service with the same destination; the benchmark now calls the system-provided
+`system.ai.claude-<x>` service instead, and later runs (150 QPS, 30 min) showed a gap in the same range.
 
 | Model | Databricks-hosted P50 / P90 / P99 | vs. your Bedrock through the gateway | vs. Bedrock direct |
 |---|---|---|---|

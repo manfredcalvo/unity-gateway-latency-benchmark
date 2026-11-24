@@ -342,7 +342,11 @@ def test_databricks_hosted_path():
     assert databricks_hosted_name("global.anthropic.claude-opus-5") == "databricks-claude-opus-5"
     cfg = real_cfg(aws={"bedrock_model_id": "us.anthropic.claude-opus-5-5"})
     t = next(t for t in build_targets(cfg) if t.name == "dbx_hosted:ug")
-    assert t.kind == "ug_model_service" and t.params["service"] == "main.bench.ugbench_opus_5_5_dbx_hosted"
+    assert t.kind == "ug_model_service" and t.params["service"] == "system.ai.claude-opus-5-5"
+    own = real_cfg(aws={"bedrock_model_id": "us.anthropic.claude-opus-5-5"},
+                   unity_gateway={"databricks_hosted": {"service": "custom"}})
+    assert next(x for x in build_targets(own) if x.name == "dbx_hosted:ug").params["service"] == \
+        "main.bench.ugbench_opus_5_5_dbx_hosted"
     assert t.params["hosted_model"] == "databricks-claude-opus-5-5"
     comps = stats.default_comparisons([x.name for x in build_targets(cfg)])
     assert ("dbx_hosted:ug", "ug:baseline", "hosted_vs_bedrock") in comps

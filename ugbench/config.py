@@ -132,9 +132,11 @@ DEFAULTS: dict[str, Any] = {
         #   anthropic_messages -> /ai-gateway/anthropic/v1/messages   (native Claude API)
         "api": "chat_completions",
         "include_provider_service_direct": True,
-        # The same model hosted by Databricks (Foundation Model API, pay-per-token), reached through a UC model
-        # service: <service_prefix>_dbx_hosted. "auto" = databricks-claude-<tier>-<version> from the model ID.
-        "databricks_hosted": {"enabled": True, "model": "auto"},
+        # The same model hosted by Databricks (pay-per-token), through a Unity Catalog model service with no
+        # optional features. service: "system" = the system-provided service system.ai.claude-<tier>-<version>;
+        # "custom" = our own <service_prefix>_dbx_hosted with the same destination. "auto" model =
+        # databricks-claude-<tier>-<version>, derived from the Bedrock model ID.
+        "databricks_hosted": {"enabled": True, "model": "auto", "service": "system"},
         "provider_api": "anthropic_messages",
         "rate_limit": {"requests_per_minute": 100000, "tokens_per_minute": None},
         "variants": {
@@ -242,6 +244,14 @@ def databricks_hosted_model(cfg: dict) -> str | None:
     return databricks_hosted_name(cfg["aws"]["bedrock_model_id"])
 
 
+def databricks_hosted_service(cfg: dict) -> str:
+    """Model service FQN for the Databricks-hosted path: system.ai.claude-<x> (default) or our own copy."""
+    dh = cfg["unity_gateway"].get("databricks_hosted") or {}
+    if dh.get("service", "system") == "system":
+        return "system.ai." + databricks_hosted_model(cfg).removeprefix("databricks-")
+    return ug_fqn(cfg, ug_service_id(cfg, "dbx_hosted"))
+
+
 def ug_service_id(cfg: dict, variant: str) -> str:
     return f"{cfg['unity_gateway']['service_prefix']}_{variant}"
 
@@ -313,7 +323,7 @@ def _build_raw_targets(cfg: dict) -> list[Target]:
         if databricks_hosted_model(cfg):
             targets.append(Target(
                 "dbx_hosted:ug", "ug_model_service", "unity_gateway", ["databricks_hosted"],
-                params={"service": ug_fqn(cfg, ug_service_id(cfg, "dbx_hosted")), "api": ug["api"],
+                params={"service": databricks_hosted_service(cfg), "api": ug["api"],
                         "hosted_model": databricks_hosted_model(cfg)}))
 
     se = cfg["serving_endpoints"]

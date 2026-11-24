@@ -152,7 +152,7 @@ def setup_unity_gateway(cfg: dict, w: WorkspaceClient, recreate: bool = False, u
     if provider_only:
         return  # the bundle (resources/ugbench_services.yml) manages the model services
     hosted = databricks_hosted_model(cfg)
-    if hosted:
+    if hosted and (ug.get("databricks_hosted") or {}).get("service", "system") != "system":
         sid = ug_service_id(cfg, "dbx_hosted")
         path = f"{UC}/model-services/{ug_fqn(cfg, sid)}"
         conf = {"routing": {"destinations": [{
